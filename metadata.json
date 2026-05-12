@@ -1,0 +1,8 @@
+{
+  "name": "Play Along Piano",
+  "description": "A responsive play-along piano application with sheet music and a virtual keyboard. Uses microphone to detect played notes.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
