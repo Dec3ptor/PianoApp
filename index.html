@@ -3,7 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <title>Play Along Piano</title>
+    <style>
+      #__err {
+        position: fixed; inset: 0; z-index: 99999;
+        background: #0a0a0a; color: #f87171;
+        font: 12px/1.4 monospace; padding: 16px;
+        overflow: auto; white-space: pre-wrap;
+        display: none;
+      }
+      #__err h1 { color: #fca5a5; font-size: 14px; margin: 0 0 12px; }
+      #__err .ua { color: #a3a3a3; font-size: 10px; margin-top: 12px; }
+    </style>
+    <script>
+      (function () {
+        var box = null;
+        function show(msg) {
+          if (!box) {
+            box = document.createElement('div');
+            box.id = '__err';
+            box.innerHTML = '<h1>App failed to start</h1><div id="__err_body"></div><div class="ua"></div>';
+            document.body.appendChild(box);
+            box.querySelector('.ua').textContent = 'UA: ' + navigator.userAgent;
+          }
+          var body = box.querySelector('#__err_body');
+          body.textContent += msg + '\n\n';
+          box.style.display = 'block';
+        }
+        window.addEventListener('error', function (e) {
+          var m = e.message || 'Unknown error';
+          if (e.filename) m += '\nat ' + e.filename + ':' + e.lineno + ':' + e.colno;
+          if (e.error && e.error.stack) m += '\n' + e.error.stack;
+          show(m);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          show('Unhandled promise rejection: ' + (r && r.stack ? r.stack : r));
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
