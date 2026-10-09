@@ -40,12 +40,13 @@ const WHITE_CORRECT =
   "bg-[linear-gradient(180deg,#a8e8d0_0%,#e6fff6_18%,#f3fffb_82%,#c4f2e1_100%)]";
 const WHITE_CORRECT_GLOW = "shadow-[0_0_8px_rgba(200,255,232,0.75)]";
 
+/** The shadow a black key casts on the white keys beside it. */
+const BLACK_KEY_SHADOW = "shadow-[0_3px_4px_rgba(0,0,0,0.6)]";
+const BLACK_IDLE = `bg-[linear-gradient(180deg,#1b1b1b_0%,#080808_72%,#303030_90%,#0e0e0e_100%)] ${BLACK_KEY_SHADOW}`;
+
 const KEY_CLASSES: Record<"black" | "white", Record<KeyState, [mobile: string, desktop: string]>> = {
   black: {
-    idle: [
-      "bg-[linear-gradient(180deg,#1b1b1b_0%,#080808_72%,#303030_90%,#0e0e0e_100%)] shadow-[0_3px_4px_rgba(0,0,0,0.6)]",
-      "bg-[linear-gradient(180deg,#1b1b1b_0%,#080808_72%,#303030_90%,#0e0e0e_100%)] shadow-[0_3px_4px_rgba(0,0,0,0.6)]",
-    ],
+    idle: [BLACK_IDLE, BLACK_IDLE],
     expected: [
       "bg-[linear-gradient(180deg,#2c6658_0%,#3d8a76_72%,#6db4a0_90%,#2f6d5f_100%)]",
       "bg-[linear-gradient(180deg,#2c6658_0%,#3d8a76_72%,#6db4a0_90%,#2f6d5f_100%)] shadow-[0_0_6px_rgba(124,179,166,0.5)]",
@@ -75,13 +76,20 @@ const KEY_CLASSES: Record<"black" | "white", Record<KeyState, [mobile: string, d
   },
 };
 
+/** Whether a white key has a black key on its left / right within the keyboard. */
+function blackNeighbours(midi: number, startMidi: number, endMidi: number) {
+  return {
+    left: midi - 1 >= startMidi && BLACK_CLASSES.has((midi + 11) % 12),
+    right: midi + 1 <= endMidi && BLACK_CLASSES.has((midi + 1) % 12),
+  };
+}
+
 /**
  * Outline of the part of a white key not covered by black keys (each black key
  * overlaps a third of its neighbours, over the top 60%).
  */
 function whiteKeyClip(midi: number, startMidi: number, endMidi: number): string | undefined {
-  const left = midi - 1 >= startMidi && BLACK_CLASSES.has((midi + 11) % 12);
-  const right = midi + 1 <= endMidi && BLACK_CLASSES.has((midi + 1) % 12);
+  const { left, right } = blackNeighbours(midi, startMidi, endMidi);
   const a = "33.34%";
   const b = "66.66%";
   const h = "60%";
@@ -90,6 +98,9 @@ function whiteKeyClip(midi: number, startMidi: number, endMidi: number): string 
   if (right) return `polygon(0 0, ${b} 0, ${b} ${h}, 100% ${h}, 100% 100%, 0 100%)`;
   return undefined;
 }
+
+/** A black key's box relative to the white key beside it; only its shadow shows. */
+const SHADOW_CASTER = `absolute top-0 h-[60%] w-2/3 rounded-b-[3px] ${BLACK_KEY_SHADOW}`;
 
 const RAIL_GLOW_GRADIENT =
   "radial-gradient(ellipse at center, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.18) 40%, transparent 70%)";
@@ -334,12 +345,18 @@ const PianoKeyboardImpl: React.FC<PianoKeyboardProps> = ({
           );
         }
         const clip = whiteKeyClip(key.midi, startMidi, endMidi);
+        const black = blackNeighbours(key.midi, startMidi, endMidi);
         return (
           <div
             key={`lit-${key.midi}`}
-            className={`absolute top-0 bottom-0 rounded-b-[4px] border-x border-b border-black/40 pointer-events-none z-[25] ${KEY_CLASSES.white[state][0]}`}
+            className="absolute top-0 bottom-0 pointer-events-none z-[25]"
             style={{ left: `${leftPct}%`, width: `${whiteKeyWidth}%`, clipPath: clip, WebkitClipPath: clip }}
-          />
+          >
+            <div className={`absolute inset-0 rounded-b-[4px] border-x border-b border-black/40 ${KEY_CLASSES.white[state][0]}`} />
+            {/* Drawn over the black keys, so it repeats the shadows they cast on it. */}
+            {black.left && <div className={SHADOW_CASTER} style={{ left: "calc(-100% / 3)" }} />}
+            {black.right && <div className={SHADOW_CASTER} style={{ left: "calc(200% / 3)" }} />}
+          </div>
         );
       })}
 
