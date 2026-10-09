@@ -149,6 +149,15 @@ export default function App() {
     catch { /* no-op */ }
   }, [effectsEnabled]);
 
+  const [particlesEnabled, setParticlesEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem("pianoapp.particles") !== "false"; }
+    catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("pianoapp.particles", String(particlesEnabled)); }
+    catch { /* no-op */ }
+  }, [particlesEnabled]);
+
   const [keyboardDim, setKeyboardDim] = useState<number>(() => {
     try { const v = localStorage.getItem("pianoapp.keyboardDim"); return v ? Number(v) : 0.55; }
     catch { return 0.55; }
@@ -390,6 +399,8 @@ export default function App() {
           <SettingsMenu
             effectsEnabled={effectsEnabled}
             onEffectsChange={setEffectsEnabled}
+            particlesEnabled={particlesEnabled}
+            onParticlesChange={setParticlesEnabled}
             keyboardDim={keyboardDim}
             onKeyboardDimChange={setKeyboardDim}
           />
@@ -469,7 +480,7 @@ export default function App() {
               {viewMode === "synthesia" ? (
                 <>
                   <div className="flex-1 min-h-0 flex px-2 pt-2 pb-0">
-                    <div className="flex-1 min-h-[260px] rounded-t-2xl overflow-hidden border border-zinc-800/80 bg-black relative">
+                    <div className="flex-1 min-h-[260px] rounded-t-2xl overflow-hidden border border-zinc-900 border-b-0 bg-black relative">
                       <FallingNotes
                         timing={timing}
                         transport={transport}
@@ -477,12 +488,13 @@ export default function App() {
                         playedNotes={playedNotesFinal}
                         startMidi={21}
                         endMidi={108}
+                        effects={particlesEnabled}
                         onNavigate={practiceMode ? navigateByDrag : undefined}
                       />
                     </div>
                   </div>
 
-                  <div className="h-[190px] shrink-0 px-2 pb-2 pt-3 border-t border-zinc-800 bg-gradient-to-b from-zinc-950 to-black">
+                  <div className="h-[190px] shrink-0 px-2 pb-2 pt-2 bg-[linear-gradient(180deg,#242424_0px,#0c0c0c_8px,#000_8px)]">
                     <PianoKeyboard
                       startMidi={21}
                       endMidi={108}

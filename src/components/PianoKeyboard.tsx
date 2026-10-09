@@ -23,55 +23,72 @@ const NO_NOTES: number[] = [];
 
 type KeyState = "idle" | "expected" | "correct" | "wrong" | "active";
 
-const BLACK_BASE = "absolute top-0 rounded-b-lg transition-colors duration-75 cursor-pointer touch-none z-10";
+const BLACK_BASE =
+  "absolute top-0 rounded-b-[3px] border border-black transition-colors duration-75 cursor-pointer touch-none z-10";
 const WHITE_BASE =
-  "flex-1 rounded-b-2xl transition-all duration-75 flex items-end justify-center pb-2 cursor-pointer touch-none relative z-0";
+  "flex-1 rounded-b-[4px] border-x border-b border-black/40 transition-colors duration-75 flex items-end justify-center pb-2 cursor-pointer touch-none relative z-0";
 
-// Key colours per state. Glow shadows are desktop-only: they are expensive to
-// composite on phones and tablets.
+// Realistic keys: white keys shaded like ivory with a darker lip at the front,
+// black keys glossy with a lighter front edge. Expected keys light up mint like
+// the falling notes, correct ones glow near-white, wrong ones rose. Glow
+// shadows are desktop-only: they are expensive to composite on phones/tablets.
+const BLACK_CORRECT =
+  "bg-[linear-gradient(180deg,#58b896_0%,#8fdcc0_72%,#c8f6e5_90%,#6fcaa9_100%)]";
+const BLACK_CORRECT_GLOW = "shadow-[0_0_20px_rgba(190,255,230,0.9),0_0_44px_rgba(124,179,166,0.5)]";
+const WHITE_CORRECT =
+  "bg-[linear-gradient(180deg,#a8e8d0_0%,#e6fff6_18%,#f3fffb_82%,#c4f2e1_100%)]";
+const WHITE_CORRECT_GLOW = "shadow-[0_0_26px_rgba(200,255,232,0.95),0_0_60px_rgba(124,179,166,0.5)]";
+
 const KEY_CLASSES: Record<"black" | "white", Record<KeyState, [mobile: string, desktop: string]>> = {
   black: {
-    idle: ["bg-zinc-950 border border-zinc-800", "bg-zinc-950 border border-zinc-800"],
+    idle: [
+      "bg-[linear-gradient(180deg,#1b1b1b_0%,#080808_72%,#303030_90%,#0e0e0e_100%)] shadow-[0_3px_4px_rgba(0,0,0,0.6)]",
+      "bg-[linear-gradient(180deg,#1b1b1b_0%,#080808_72%,#303030_90%,#0e0e0e_100%)] shadow-[0_3px_4px_rgba(0,0,0,0.6)]",
+    ],
     expected: [
-      "bg-sky-500 border border-sky-300/60",
-      "bg-sky-500 border border-sky-300/60 shadow-[0_0_16px_rgba(56,189,248,0.6),0_0_28px_rgba(59,130,246,0.28)]",
+      "bg-[linear-gradient(180deg,#2c6658_0%,#3d8a76_72%,#6db4a0_90%,#2f6d5f_100%)]",
+      "bg-[linear-gradient(180deg,#2c6658_0%,#3d8a76_72%,#6db4a0_90%,#2f6d5f_100%)] shadow-[0_0_14px_rgba(124,179,166,0.6)]",
     ],
-    correct: [
-      "bg-emerald-400 border border-emerald-200/70",
-      "bg-emerald-400 border border-emerald-200/70 shadow-[0_0_24px_rgba(74,222,128,0.95),0_0_54px_rgba(16,185,129,0.42)]",
-    ],
+    correct: [BLACK_CORRECT, `${BLACK_CORRECT} ${BLACK_CORRECT_GLOW}`],
     wrong: [
-      "bg-rose-400 border border-rose-200/70",
-      "bg-rose-400 border border-rose-200/70 shadow-[0_0_24px_rgba(251,113,133,0.95),0_0_54px_rgba(244,63,94,0.38)]",
+      "bg-[linear-gradient(180deg,#9b2f45_0%,#c4465f_72%,#ef8a9c_90%,#a83850_100%)]",
+      "bg-[linear-gradient(180deg,#9b2f45_0%,#c4465f_72%,#ef8a9c_90%,#a83850_100%)] shadow-[0_0_18px_rgba(251,113,133,0.8)]",
     ],
-    active: [
-      "bg-emerald-500 border border-emerald-200/70",
-      "bg-emerald-500 border border-emerald-200/70 shadow-[0_0_24px_rgba(16,185,129,0.85),0_0_44px_rgba(16,185,129,0.32)]",
-    ],
+    active: [BLACK_CORRECT, `${BLACK_CORRECT} ${BLACK_CORRECT_GLOW}`],
   },
   white: {
     idle: [
-      "bg-zinc-100 border-x border-b border-zinc-300/80",
-      "bg-zinc-100 border-x border-b border-zinc-300/80",
+      "bg-[linear-gradient(180deg,#d5d5d0_0%,#f3f3ef_10%,#fafaf7_82%,#e2e2dc_100%)]",
+      "bg-[linear-gradient(180deg,#d5d5d0_0%,#f3f3ef_10%,#fafaf7_82%,#e2e2dc_100%)]",
     ],
     expected: [
-      "bg-sky-300 border-x border-b border-sky-200",
-      "bg-sky-300 border-x border-b border-sky-200 shadow-[0_0_18px_rgba(56,189,248,0.55),inset_0_0_18px_rgba(255,255,255,0.35)]",
+      "bg-[linear-gradient(180deg,#8fc7b6_0%,#c5ebde_14%,#d6f3e9_82%,#aedfcf_100%)]",
+      "bg-[linear-gradient(180deg,#8fc7b6_0%,#c5ebde_14%,#d6f3e9_82%,#aedfcf_100%)] shadow-[0_0_18px_rgba(124,179,166,0.55)]",
     ],
-    correct: [
-      "bg-emerald-300 border-x border-b border-emerald-100",
-      "bg-emerald-300 border-x border-b border-emerald-100 shadow-[0_0_26px_rgba(110,231,183,1),0_0_60px_rgba(16,185,129,0.45),inset_0_0_22px_rgba(255,255,255,0.4)]",
-    ],
+    correct: [WHITE_CORRECT, `${WHITE_CORRECT} ${WHITE_CORRECT_GLOW}`],
     wrong: [
-      "bg-rose-300 border-x border-b border-rose-100",
-      "bg-rose-300 border-x border-b border-rose-100 shadow-[0_0_26px_rgba(253,164,175,0.95),0_0_60px_rgba(244,63,94,0.4),inset_0_0_22px_rgba(255,255,255,0.35)]",
+      "bg-[linear-gradient(180deg,#f19aaa_0%,#ffd2da_18%,#ffdde3_82%,#f5b3bf_100%)]",
+      "bg-[linear-gradient(180deg,#f19aaa_0%,#ffd2da_18%,#ffdde3_82%,#f5b3bf_100%)] shadow-[0_0_24px_rgba(253,164,175,0.9)]",
     ],
-    active: [
-      "bg-emerald-400 border-x border-b border-emerald-100",
-      "bg-emerald-400 border-x border-b border-emerald-100 shadow-[0_0_24px_rgba(16,185,129,0.8),0_0_54px_rgba(16,185,129,0.32),inset_0_0_22px_rgba(255,255,255,0.3)]",
-    ],
+    active: [WHITE_CORRECT, `${WHITE_CORRECT} ${WHITE_CORRECT_GLOW}`],
   },
 };
+
+/**
+ * Outline of the part of a white key not covered by black keys (each black key
+ * overlaps a third of its neighbours, over the top 60%).
+ */
+function whiteKeyClip(midi: number, startMidi: number, endMidi: number): string | undefined {
+  const left = midi - 1 >= startMidi && BLACK_CLASSES.has((midi + 11) % 12);
+  const right = midi + 1 <= endMidi && BLACK_CLASSES.has((midi + 1) % 12);
+  const a = "33.34%";
+  const b = "66.66%";
+  const h = "60%";
+  if (left && right) return `polygon(${a} 0, ${b} 0, ${b} ${h}, 100% ${h}, 100% 100%, 0 100%, 0 ${h}, ${a} ${h})`;
+  if (left) return `polygon(${a} 0, 100% 0, 100% 100%, 0 100%, 0 ${h}, ${a} ${h})`;
+  if (right) return `polygon(0 0, ${b} 0, ${b} ${h}, 100% ${h}, 100% 100%, 0 100%)`;
+  return undefined;
+}
 
 const SPOTLIGHT_GRADIENT =
   "linear-gradient(to bottom, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.45) 18%, rgba(255,255,255,0.12) 45%, transparent 78%)";
@@ -240,31 +257,34 @@ const PianoKeyboardImpl: React.FC<PianoKeyboardProps> = ({
 
   const variantIndex = isMobile ? 0 : 1;
 
+  const stateOf = (midi: number): KeyState => {
+    const isActive = activeNotes.has(midi);
+    const isExpected = expectedSet.has(midi);
+    const isPlayed = playedSet.has(midi);
+    // Green when correctly pressed OR actively held during an expected window.
+    return (isPlayed || isActive) && isExpected
+      ? "correct"
+      : isPlayed
+        ? "wrong"
+        : isActive
+          ? "active"
+          : isExpected
+            ? "expected"
+            : "idle";
+  };
+
   return (
     <div
       ref={containerRef}
       className={cn(
-        "w-full h-full flex rounded-b-2xl relative touch-none select-none bg-transparent",
+        "w-full h-full flex rounded-b-md relative touch-none select-none bg-black",
         // Allow surround glow to spill above the keyboard when stage lighting is on.
         topLight ? "" : "overflow-hidden",
         variant === "flow" ? "min-h-[180px]" : "min-h-[150px] max-h-[300px]",
       )}
     >
       {keys.map((key) => {
-        const isActive = activeNotes.has(key.midi);
-        const isExpected = expectedSet.has(key.midi);
-        const isPlayed = playedSet.has(key.midi);
-        // Green when correctly pressed OR actively held during an expected window.
-        const state: KeyState =
-          (isPlayed || isActive) && isExpected
-            ? "correct"
-            : isPlayed
-              ? "wrong"
-              : isActive
-                ? "active"
-                : isExpected
-                  ? "expected"
-                  : "idle";
+        const state = stateOf(key.midi);
         if (key.isBlack) {
           const leftPos = key.precedingWhite * whiteKeyWidth;
           return (
@@ -285,10 +305,35 @@ const PianoKeyboardImpl: React.FC<PianoKeyboardProps> = ({
       {/* Dim layer — darkens all keys uniformly. Sits above key bodies, below spotlights. */}
       {dim < 1 && (
         <div
-          className="absolute inset-0 pointer-events-none z-20 rounded-b-2xl"
+          className="absolute inset-0 pointer-events-none z-20 rounded-b-md"
           style={{ background: `rgba(0,0,0,${(1 - dim).toFixed(3)})` }}
         />
       )}
+
+      {/* Lit keys stay bright above the dim layer, like keys under a spotlight. White
+          keys are clipped around their black-key notches so they don't cover them. */}
+      {dim < 1 && keys.map((key) => {
+        const state = stateOf(key.midi);
+        if (state === "idle") return null;
+        const leftPct = key.precedingWhite * whiteKeyWidth;
+        if (key.isBlack) {
+          return (
+            <div
+              key={`lit-${key.midi}`}
+              className={`absolute top-0 rounded-b-[3px] border border-black pointer-events-none z-[25] ${KEY_CLASSES.black[state][variantIndex]}`}
+              style={{ left: `calc(${leftPct}% - ${whiteKeyWidth / 3}%)`, width: `${whiteKeyWidth / 1.5}%`, height: "60%" }}
+            />
+          );
+        }
+        const clip = whiteKeyClip(key.midi, startMidi, endMidi);
+        return (
+          <div
+            key={`lit-${key.midi}`}
+            className={`absolute top-0 bottom-0 rounded-b-[4px] border-x border-b border-black/40 pointer-events-none z-[25] ${KEY_CLASSES.white[state][0]}`}
+            style={{ left: `${leftPct}%`, width: `${whiteKeyWidth}%`, clipPath: clip, WebkitClipPath: clip }}
+          />
+        );
+      })}
 
       {/* Per-pressed-key spotlight: top-down white highlight + soft surround glow. */}
       {topLight && keys.map((key) => {
@@ -304,7 +349,7 @@ const PianoKeyboardImpl: React.FC<PianoKeyboardProps> = ({
             key={`spot-${key.midi}`}
             className={cn(
               "absolute top-0 pointer-events-none z-30",
-              key.isBlack ? "rounded-b-lg" : "rounded-b-2xl",
+              key.isBlack ? "rounded-b-[3px]" : "rounded-b-[4px]",
             )}
             style={{
               left,

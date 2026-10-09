@@ -16,7 +16,7 @@ const MARKER_PREFIX = "pianoapp.markers:";
 
 // Known setting keys that round-trip through the export. Future settings can
 // be added here without changing the schema.
-const SETTING_KEYS = ["effectsEnabled", "keyboardDim"] as const;
+const SETTING_KEYS = ["effectsEnabled", "keyboardDim", "particles"] as const;
 
 export interface ExportFile {
   app: typeof APP_ID;

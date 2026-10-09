@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Settings, Sparkles, Download, Upload } from "lucide-react";
+import { Settings, Sparkles, Flame, Download, Upload } from "lucide-react";
 import { cn } from "../lib/utils";
 import { applyImport, downloadExport } from "../lib/dataExport";
 
 interface SettingsMenuProps {
   effectsEnabled: boolean;
   onEffectsChange: (v: boolean) => void;
+  particlesEnabled: boolean;
+  onParticlesChange: (v: boolean) => void;
   keyboardDim: number;
   onKeyboardDimChange: (v: number) => void;
 }
@@ -16,6 +18,7 @@ interface SettingsMenuProps {
  */
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({
   effectsEnabled, onEffectsChange,
+  particlesEnabled, onParticlesChange,
   keyboardDim, onKeyboardDimChange,
 }) => {
   const [open, setOpen] = useState(false);
@@ -91,6 +94,19 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
               </div>
             </div>
             <Toggle checked={effectsEnabled} onChange={onEffectsChange} />
+          </label>
+
+          <label className="flex items-center justify-between gap-3 p-2 hover:bg-zinc-800/60 rounded-lg cursor-pointer">
+            <div className="flex items-center gap-2">
+              <Flame className="w-4 h-4 text-emerald-300 shrink-0" />
+              <div>
+                <div className="text-sm text-zinc-100 leading-tight">Particle effects</div>
+                <div className="text-[10px] text-zinc-500 leading-tight">
+                  Sparks where notes hit the keys (Flow view)
+                </div>
+              </div>
+            </div>
+            <Toggle checked={particlesEnabled} onChange={onParticlesChange} />
           </label>
 
           {effectsEnabled && (

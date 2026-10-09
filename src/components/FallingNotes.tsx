@@ -1,7 +1,7 @@
-import React, { useLayoutEffect, useMemo, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { Transport } from "../lib/transport";
+import { HitEffects, type Emitter } from "../lib/hitEffects";
 import { lowerBound, parseKey, soundingKey, type TrackTiming } from "../lib/trackTiming";
-import { useIsMobile } from "../hooks/useDeviceCaps";
 import { useTransportValue } from "../hooks/useTransport";
 
 interface FallingNotesProps {
@@ -11,6 +11,8 @@ interface FallingNotesProps {
   playedNotes?: number[];
   startMidi?: number;
   endMidi?: number;
+  /** Sparks and flares where notes hit the keyboard. */
+  effects?: boolean;
   /** Called in practice mode when the user drags up/down; delta is in beats */
   onNavigate?: (deltaBeat: number) => void;
 }
@@ -28,6 +30,18 @@ const NO_NOTES: number[] = [];
 
 const baseFor = (beat: number) => Math.floor(beat / REBASE_BEATS) * REBASE_BEATS;
 
+// Mint notes on black, after the "particle" style of piano videos. Notes that
+// are sounding brighten; ones played correctly glow near-white. Glows are
+// cheap here: notes are only repainted when they change, never per frame.
+const NOTE_CLASSES = {
+  idleWhite: "bg-[#7cb3a6] shadow-[0_0_10px_rgba(124,179,166,0.3)] z-0",
+  idleBlack: "bg-[#5d9688] shadow-[0_0_10px_rgba(93,150,136,0.3)] z-10",
+  targetWhite: "bg-[#a9dccb] shadow-[0_0_16px_rgba(160,225,203,0.6)] z-0",
+  targetBlack: "bg-[#86c5b1] shadow-[0_0_16px_rgba(134,197,177,0.6)] z-10",
+  correctWhite: "bg-[#e0fff3] shadow-[0_0_22px_rgba(200,255,232,0.85),0_0_44px_rgba(124,179,166,0.45)] z-0",
+  correctBlack: "bg-[#b8f1dc] shadow-[0_0_22px_rgba(184,241,220,0.85),0_0_44px_rgba(124,179,166,0.45)] z-10",
+};
+
 /**
  * Synthesia-style falling notes. During playback the only per-frame work is
  * one CSS transform on the strip holding the notes, which the compositor
@@ -41,12 +55,15 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
   playedNotes = NO_NOTES,
   startMidi = 21,
   endMidi = 108,
+  effects = true,
   onNavigate,
 }) => {
-  const isMobile = useIsMobile();
   const stripRef = useRef<HTMLDivElement>(null);
+  const fxCanvasRef = useRef<HTMLCanvasElement>(null);
+  const fxRef = useRef<HitEffects | null>(null);
   const base = useTransportValue(transport, (t) => baseFor(t.beat));
   const sounding = useTransportValue(transport, (t) => soundingKey(timing, t.beat));
+  const isPlaying = useTransportValue(transport, (t) => t.playing);
 
   // Vertical drag tracking for practice mode navigation.
   // Dragging down moves forward in time, up moves back — matches the natural
@@ -69,8 +86,8 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
     dragStartY.current = null;
   };
 
-  // Pre-compute key geometry once per midi-range.
-  const { whiteKeyWidth, gridLines, midiLayout } = useMemo(() => {
+  // Pre-compute key geometry once per midi-range, plus a faint line at each C.
+  const { octaveLines, midiLayout } = useMemo(() => {
     const layout = new Map<number, { left: number; width: number; isBlack: boolean }>();
     const lines: number[] = [];
     let whiteCount = 0;
@@ -93,11 +110,11 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
           width: ww,
           isBlack: false,
         });
-        lines.push(precedingWhite * ww);
+        if (midi % 12 === 0 && precedingWhite > 0) lines.push(precedingWhite * ww);
         precedingWhite++;
       }
     }
-    return { whiteKeyWidth: ww, gridLines: lines, midiLayout: layout };
+    return { octaveLines: lines, midiLayout: layout };
   }, [startMidi, endMidi]);
 
   // Notes that can be on screen while the playhead is in [base, base + REBASE_BEATS).
@@ -127,48 +144,68 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
   const expectedSet = useMemo(() => new Set(expectedNotes), [expectedNotes]);
   const playedSet = useMemo(() => new Set(playedNotes), [playedNotes]);
 
-  // Slim shadow set on mobile to keep GPU compositing cheap.
-  const cls = isMobile
-    ? {
-        correctBlack: "bg-emerald-400 z-10",
-        correctWhite: "bg-emerald-300 z-0",
-        targetBlack: "bg-sky-400 z-10",
-        targetWhite: "bg-cyan-300 z-0",
-        idleBlack: "bg-blue-500 z-10",
-        idleWhite: "bg-blue-300 z-0",
-      }
-    : {
-        correctBlack:
-          "bg-emerald-400 shadow-[0_0_18px_rgba(74,222,128,0.95),0_0_36px_rgba(16,185,129,0.45)] z-10",
-        correctWhite:
-          "bg-emerald-300 shadow-[0_0_20px_rgba(110,231,183,1),0_0_42px_rgba(16,185,129,0.5)] z-0",
-        targetBlack:
-          "bg-sky-400 shadow-[0_0_16px_rgba(56,189,248,0.9),0_0_34px_rgba(59,130,246,0.4)] z-10",
-        targetWhite:
-          "bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.95),0_0_38px_rgba(59,130,246,0.45)] z-0",
-        idleBlack: "bg-blue-500/90 shadow-[0_0_12px_rgba(59,130,246,0.45)] z-10",
-        idleWhite: "bg-blue-300/90 shadow-[0_0_14px_rgba(96,165,250,0.4)] z-0",
-      };
+  // Keys that flare and spark at the hit line: notes sounding during playback,
+  // and whatever the player presses (white when right, rose when wrong).
+  const emitters = useMemo(() => {
+    const list: Emitter[] = [];
+    const lit = new Set<number>();
+    const at = (midi: number) => {
+      const geo = midiLayout.get(midi);
+      return geo ? { x: (geo.left + geo.width / 2) / 100, w: geo.width / 100 } : null;
+    };
+    if (isPlaying) {
+      soundingSet.forEach((i) => {
+        const midi = timing.notes[i].midi;
+        const pos = at(midi);
+        if (!pos || lit.has(midi)) return;
+        lit.add(midi);
+        list.push({ id: `n${i}`, ...pos, tone: playedSet.has(midi) ? 1 : 0 });
+      });
+    }
+    playedSet.forEach((midi) => {
+      const pos = at(midi);
+      if (!pos || lit.has(midi)) return;
+      list.push({ id: `p${midi}`, ...pos, tone: expectedSet.has(midi) ? 1 : 2 });
+    });
+    return list;
+  }, [isPlaying, soundingSet, playedSet, expectedSet, timing, midiLayout]);
+
+  useEffect(() => {
+    const canvas = fxCanvasRef.current;
+    if (!effects || !canvas) return;
+    const fx = new HitEffects(canvas);
+    fxRef.current = fx;
+    const onResize = () => fx.resize();
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(onResize);
+      ro.observe(canvas);
+    } else {
+      window.addEventListener("resize", onResize);
+    }
+    return () => {
+      fx.dispose();
+      fxRef.current = null;
+      if (ro) ro.disconnect();
+      else window.removeEventListener("resize", onResize);
+    };
+  }, [effects]);
+
+  useEffect(() => {
+    fxRef.current?.setEmitters(emitters);
+  }, [emitters, effects]);
 
   return (
     <div
-      className={`absolute inset-0 overflow-hidden bg-[linear-gradient(180deg,rgba(15,23,42,0.92)_0%,rgba(2,6,23,0.98)_100%)] ${onNavigate ? "cursor-ns-resize touch-none" : "pointer-events-none"}`}
+      className={`absolute inset-0 overflow-hidden bg-black ${onNavigate ? "cursor-ns-resize touch-none" : "pointer-events-none"}`}
       onPointerDown={onNavigate ? handlePointerDown : undefined}
       onPointerMove={onNavigate ? handlePointerMove : undefined}
       onPointerUp={onNavigate ? handlePointerUp : undefined}
       onPointerCancel={onNavigate ? handlePointerUp : undefined}
     >
-      <div className="absolute inset-0">
-        {gridLines.map((l, i) => (
-          <div
-            key={i}
-            className="absolute top-0 bottom-0 border-r border-zinc-700/30"
-            style={{ left: `${l}%`, width: `${whiteKeyWidth}%` }}
-          />
-        ))}
-      </div>
-
-      <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-cyan-300/10 to-transparent" />
+      {octaveLines.map((l, i) => (
+        <div key={i} className="absolute top-0 bottom-0 w-px bg-white/[0.06]" style={{ left: `${l}%` }} />
+      ))}
 
       <div ref={stripRef} className="absolute inset-0 will-change-transform">
         {visible.map((i) => {
@@ -178,17 +215,17 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
           const isCorrect = isCurrent && playedSet.has(n.midi);
           const isTarget = isCurrent && expectedSet.has(n.midi);
           const noteClassName = isCorrect
-            ? geo.isBlack ? cls.correctBlack : cls.correctWhite
+            ? geo.isBlack ? NOTE_CLASSES.correctBlack : NOTE_CLASSES.correctWhite
             : isTarget
-              ? geo.isBlack ? cls.targetBlack : cls.targetWhite
-              : geo.isBlack ? cls.idleBlack : cls.idleWhite;
+              ? geo.isBlack ? NOTE_CLASSES.targetBlack : NOTE_CLASSES.targetWhite
+              : geo.isBlack ? NOTE_CLASSES.idleBlack : NOTE_CLASSES.idleWhite;
           return (
             <div
               key={i}
-              className={`absolute rounded-t-md ${noteClassName}`}
+              className={`absolute rounded-[5px] ${noteClassName}`}
               style={{
-                left: `${geo.left}%`,
-                width: `${geo.width}%`,
+                left: `calc(${geo.left}% + 1px)`,
+                width: `calc(${geo.width}% - 2px)`,
                 bottom: `${(n.startTime - base) * PCT_PER_BEAT}%`,
                 height: `${n.duration * PCT_PER_BEAT}%`,
               }}
@@ -197,7 +234,15 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
         })}
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-gradient-to-t from-cyan-300 via-sky-400 to-transparent z-20 shadow-[0_0_22px_rgba(56,189,248,0.85)]" />
+      {/* Notes fade in out of the dark at the top. */}
+      <div className="absolute inset-x-0 top-0 h-3/5 bg-gradient-to-b from-black/45 to-transparent pointer-events-none z-[15]" />
+
+      {/* Hit line */}
+      <div className="absolute bottom-0 inset-x-0 h-px bg-[#d4e6e0]/50 shadow-[0_0_10px_2px_rgba(124,179,166,0.35)] z-20" />
+
+      {effects && (
+        <canvas ref={fxCanvasRef} className="absolute inset-x-0 bottom-0 w-full h-2/5 pointer-events-none z-30" />
+      )}
     </div>
   );
 };
