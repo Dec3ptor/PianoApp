@@ -31,13 +31,14 @@ const WHITE_BASE =
 // Realistic keys: white keys shaded like ivory with a darker lip at the front,
 // black keys glossy with a lighter front edge. Expected keys light up mint like
 // the falling notes, correct ones glow near-white, wrong ones rose. Glow
-// shadows are desktop-only: they are expensive to composite on phones/tablets.
+// shadows are desktop-only (expensive to composite on phones/tablets) and kept
+// tight, so the light stays on the key instead of tinting its neighbours.
 const BLACK_CORRECT =
   "bg-[linear-gradient(180deg,#58b896_0%,#8fdcc0_72%,#c8f6e5_90%,#6fcaa9_100%)]";
-const BLACK_CORRECT_GLOW = "shadow-[0_0_20px_rgba(190,255,230,0.9),0_0_44px_rgba(124,179,166,0.5)]";
+const BLACK_CORRECT_GLOW = "shadow-[0_0_8px_rgba(190,255,230,0.7)]";
 const WHITE_CORRECT =
   "bg-[linear-gradient(180deg,#a8e8d0_0%,#e6fff6_18%,#f3fffb_82%,#c4f2e1_100%)]";
-const WHITE_CORRECT_GLOW = "shadow-[0_0_26px_rgba(200,255,232,0.95),0_0_60px_rgba(124,179,166,0.5)]";
+const WHITE_CORRECT_GLOW = "shadow-[0_0_8px_rgba(200,255,232,0.75)]";
 
 const KEY_CLASSES: Record<"black" | "white", Record<KeyState, [mobile: string, desktop: string]>> = {
   black: {
@@ -47,12 +48,12 @@ const KEY_CLASSES: Record<"black" | "white", Record<KeyState, [mobile: string, d
     ],
     expected: [
       "bg-[linear-gradient(180deg,#2c6658_0%,#3d8a76_72%,#6db4a0_90%,#2f6d5f_100%)]",
-      "bg-[linear-gradient(180deg,#2c6658_0%,#3d8a76_72%,#6db4a0_90%,#2f6d5f_100%)] shadow-[0_0_14px_rgba(124,179,166,0.6)]",
+      "bg-[linear-gradient(180deg,#2c6658_0%,#3d8a76_72%,#6db4a0_90%,#2f6d5f_100%)] shadow-[0_0_6px_rgba(124,179,166,0.5)]",
     ],
     correct: [BLACK_CORRECT, `${BLACK_CORRECT} ${BLACK_CORRECT_GLOW}`],
     wrong: [
       "bg-[linear-gradient(180deg,#9b2f45_0%,#c4465f_72%,#ef8a9c_90%,#a83850_100%)]",
-      "bg-[linear-gradient(180deg,#9b2f45_0%,#c4465f_72%,#ef8a9c_90%,#a83850_100%)] shadow-[0_0_18px_rgba(251,113,133,0.8)]",
+      "bg-[linear-gradient(180deg,#9b2f45_0%,#c4465f_72%,#ef8a9c_90%,#a83850_100%)] shadow-[0_0_8px_rgba(251,113,133,0.65)]",
     ],
     active: [BLACK_CORRECT, `${BLACK_CORRECT} ${BLACK_CORRECT_GLOW}`],
   },
@@ -63,12 +64,12 @@ const KEY_CLASSES: Record<"black" | "white", Record<KeyState, [mobile: string, d
     ],
     expected: [
       "bg-[linear-gradient(180deg,#8fc7b6_0%,#c5ebde_14%,#d6f3e9_82%,#aedfcf_100%)]",
-      "bg-[linear-gradient(180deg,#8fc7b6_0%,#c5ebde_14%,#d6f3e9_82%,#aedfcf_100%)] shadow-[0_0_18px_rgba(124,179,166,0.55)]",
+      "bg-[linear-gradient(180deg,#8fc7b6_0%,#c5ebde_14%,#d6f3e9_82%,#aedfcf_100%)] shadow-[0_0_6px_rgba(124,179,166,0.45)]",
     ],
     correct: [WHITE_CORRECT, `${WHITE_CORRECT} ${WHITE_CORRECT_GLOW}`],
     wrong: [
       "bg-[linear-gradient(180deg,#f19aaa_0%,#ffd2da_18%,#ffdde3_82%,#f5b3bf_100%)]",
-      "bg-[linear-gradient(180deg,#f19aaa_0%,#ffd2da_18%,#ffdde3_82%,#f5b3bf_100%)] shadow-[0_0_24px_rgba(253,164,175,0.9)]",
+      "bg-[linear-gradient(180deg,#f19aaa_0%,#ffd2da_18%,#ffdde3_82%,#f5b3bf_100%)] shadow-[0_0_8px_rgba(253,164,175,0.7)]",
     ],
     active: [WHITE_CORRECT, `${WHITE_CORRECT} ${WHITE_CORRECT_GLOW}`],
   },
