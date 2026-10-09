@@ -1,1 +1,40 @@
 @import "tailwindcss";
+
+/* Fill the visible viewport; 100vh alone includes the area under the mobile
+   browser toolbars. */
+.app-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+html,
+body {
+  background: #09090b;
+  /* No double-tap zoom on buttons and no pull-to-refresh / overscroll bounce
+     while playing. */
+  touch-action: manipulation;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Marker pins are removed with a long press; don't let iOS open its callout. */
+button {
+  -webkit-touch-callout: none;
+}
+
+/* Sheet music: notes sounding at the playhead (see SheetMusic.tsx). CSS rules
+   override the fill/stroke attributes VexFlow writes into the SVG. */
+.sheet-note-current,
+.sheet-note-current [fill]:not([fill="none"]) {
+  fill: #60a5fa;
+}
+.sheet-note-current [stroke]:not([stroke="none"]) {
+  stroke: #60a5fa;
+}
+.sheet-note-played,
+.sheet-note-played [fill]:not([fill="none"]) {
+  fill: #22c55e;
+}
+.sheet-note-played [stroke]:not([stroke="none"]) {
+  stroke: #22c55e;
+}

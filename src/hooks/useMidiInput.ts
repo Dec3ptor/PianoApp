@@ -52,8 +52,9 @@ export function useMidiInput() {
     const attachInputs = (access: MIDIAccess) => {
       const names: string[] = [];
       access.inputs.forEach((input) => {
-        names.push(input.name || "MIDI Input");
         input.onmidimessage = handleMessage;
+        // Unplugged ports can stay in the map with state "disconnected".
+        if (input.state !== "disconnected") names.push(input.name || "MIDI Input");
       });
       setDeviceNames(names);
     };
@@ -74,8 +75,16 @@ export function useMidiInput() {
           if (cancelled) return;
           accessRef.current = access;
           attachInputs(access);
-          access.onstatechange = () => {
-            if (!cancelled) attachInputs(access);
+          access.onstatechange = (e: Event) => {
+            if (cancelled) return;
+            const port = (e as MIDIConnectionEvent).port;
+            // Notes held on a device that was just unplugged would never get
+            // their note-off, so clear them.
+            if (port && port.type === "input" && port.state === "disconnected" && activeNotesRef.current.size > 0) {
+              activeNotesRef.current.clear();
+              setMidiNotes([]);
+            }
+            attachInputs(access);
           };
         })
         .catch((err: unknown) => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Play,
   Square,
@@ -7,7 +7,6 @@ import {
   GraduationCap,
   BookmarkPlus,
 } from "lucide-react";
-import { SheetMusic } from "./components/SheetMusic";
 import { PianoKeyboard } from "./components/PianoKeyboard";
 import { FallingNotes } from "./components/FallingNotes";
 import { MarkerPin } from "./components/MarkerPin";
@@ -16,8 +15,15 @@ import { MOONLIGHT_SONATA } from "./lib/trackData";
 import { usePitchDetector } from "./hooks/usePitchDetector";
 import { useMidiInput } from "./hooks/useMidiInput";
 import { useIsMobile, useWakeLock } from "./hooks/useDeviceCaps";
+import { useTransportValue } from "./hooks/useTransport";
 import { cn } from "./lib/utils";
-import { getSynth } from "./lib/synth";
+import { installAudioUnlock } from "./lib/audioContext";
+import { preloadPianoSamples } from "./lib/piano";
+import { Transport } from "./lib/transport";
+import { buildTrackTiming, chordIndexAt, parseKey, soundingKey } from "./lib/trackTiming";
+
+// VexFlow is large and only needed by the sheet view, so it loads on demand.
+const SheetMusic = lazy(() => import("./components/SheetMusic"));
 
 const SPEED_MIN = 0.25;
 const SPEED_MAX = 1.5;
@@ -31,10 +37,6 @@ export default function App() {
   // On mobile, default to a single view (Flow) instead of "both" which
   // renders the sheet music + keyboard simultaneously and is much heavier.
   const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "synthesia" : "both");
-  const [isPlaying, setIsPlaying] = useState(false);
-  const isPlayingRef = useRef(false);
-  const [currentBeat, setCurrentBeat] = useState(-LEAD_IN_BEATS);
-  const scheduledUntilRef = useRef(-LEAD_IN_BEATS);
 
   const { midiNotes, isListening, startListening, stopListening, error } =
     usePitchDetector();
@@ -45,38 +47,56 @@ export default function App() {
     error: midiError,
     supported: midiSupported,
   } = useMidiInput();
-  const [synthesizedNote, setSynthesizedNote] = useState<number | null>(null);
+  const [touchNotes, setTouchNotes] = useState<number[]>([]);
 
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-  const playbackSpeedRef = useRef(1);
-  useEffect(() => {
-    playbackSpeedRef.current = playbackSpeed;
-  }, [playbackSpeed]);
 
   const track = MOONLIGHT_SONATA;
+  const timing = useMemo(() => buildTrackTiming(track), [track]);
+
+  // ── Playback ─────────────────────────────────────────────────────────────
+  // The transport owns the playhead and schedules the audio. App only
+  // re-renders when something derived from the playhead changes (a note
+  // starts or ends, a new chord in practice mode), not on every frame.
+  const transport = useMemo(
+    () => new Transport(timing, track.bpm, -LEAD_IN_BEATS, timing.lastStart + 4),
+    [timing, track.bpm],
+  );
+  const isPlaying = useTransportValue(transport, (t) => t.playing);
+  useEffect(() => {
+    transport.setSpeed(playbackSpeed);
+  }, [transport, playbackSpeed]);
+  useEffect(() => () => transport.pause(), [transport]);
+
+  // Unlock audio on the first tap and fetch/decode this piece's samples while
+  // the page is idle, so the first press of Play doesn't wait on (or stutter
+  // through) sample loading.
+  useEffect(() => {
+    const removeUnlock = installAudioUnlock();
+    const id = window.setTimeout(() => preloadPianoSamples(timing.midisByFirstUse), 300);
+    return () => {
+      removeUnlock();
+      window.clearTimeout(id);
+    };
+  }, [timing]);
+
+  // A hidden tab gets no animation frames and iOS suspends its audio, so
+  // pause rather than drift out of sync.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) transport.pause();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [transport]);
 
   // ── Practice mode ────────────────────────────────────────────────────────
   const [practiceMode, setPracticeMode] = useState(false);
-
-  // Pre-compute "chords": groups of notes that share the same start beat.
-  // Sorted ascending by beat so we can navigate by chord position.
-  const chords = useMemo(() => {
-    const map = new Map<number, number[]>();
-    for (const n of track.notes) {
-      if (!map.has(n.startTime)) map.set(n.startTime, []);
-      map.get(n.startTime)!.push(n.midi);
-    }
-    return Array.from(map.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([beat, midis]) => ({ beat, midis }));
-  }, [track]);
+  const chords = timing.chords;
 
   // Total beats including a tail so the progress bar / marker positions stay
   // anchored relative to the whole track regardless of mode.
-  const totalBeats = useMemo(() => {
-    const last = track.notes[track.notes.length - 1];
-    return last.startTime + last.duration + LEAD_IN_BEATS;
-  }, [track]);
+  const totalBeats = timing.endBeat + LEAD_IN_BEATS;
 
   // ── Markers ──────────────────────────────────────────────────────────────
   // User-defined jump points (beat positions). Persisted per-track so each
@@ -99,8 +119,8 @@ export default function App() {
   }, [markers, markerStorageKey]);
 
   const addMarker = () => {
+    const beat = Math.max(0, transport.beat);
     setMarkers((prev) => {
-      const beat = Math.max(0, currentBeat);
       // Avoid duplicates within a quarter beat of an existing marker.
       if (prev.some((m) => Math.abs(m - beat) < 0.25)) return prev;
       return [...prev, beat].sort((a, b) => a - b);
@@ -109,10 +129,7 @@ export default function App() {
   const removeMarker = (beat: number) => {
     setMarkers((prev) => prev.filter((m) => m !== beat));
   };
-  const jumpToBeat = (beat: number) => {
-    setCurrentBeat(beat);
-    scheduledUntilRef.current = beat;
-  };
+  const jumpToBeat = (beat: number) => transport.seek(beat);
 
   // ── Settings: persisted preferences ──────────────────────────────────────
   const [effectsEnabled, setEffectsEnabled] = useState<boolean>(() => {
@@ -142,33 +159,28 @@ export default function App() {
     const set = new Set<number>();
     midiNotes.forEach((n) => set.add(n));
     keyboardMidiNotes.forEach((n) => set.add(n));
-    if (synthesizedNote !== null) set.add(synthesizedNote);
+    touchNotes.forEach((n) => set.add(n));
     return {
       activeNotes: set,
       playedNotesFinal: Array.from(set).sort((a, b) => a - b),
     };
-  }, [midiNotes, keyboardMidiNotes, synthesizedNote]);
+  }, [midiNotes, keyboardMidiNotes, touchNotes]);
 
-  // In practice mode the user scrolls `currentBeat` freely; the "expected"
+  // In practice mode the user scrolls the playhead freely; the "expected"
   // chord is whichever chord sits closest to (and at or after) the playhead.
   // This decouples the visual scroll position from the integer chord index,
   // so dragging feels like a normal page scroll rather than a snap-step.
-  const expectedChordIndex = useMemo(() => {
-    if (!practiceMode || chords.length === 0) return -1;
-    // Small backward tolerance so a slight overshoot still targets the chord.
-    const target = currentBeat - 0.05;
-    for (let i = 0; i < chords.length; i++) {
-      if (chords[i].beat >= target) return i;
-    }
-    return chords.length - 1;
-  }, [practiceMode, chords, currentBeat]);
+  const expectedChordIndex = useTransportValue(transport, (t) =>
+    practiceMode ? chordIndexAt(timing, t.beat) : -1,
+  );
+  // Notes sounding at the playhead, as a string key so this only re-renders
+  // when a note starts or stops.
+  const sounding = useTransportValue(transport, (t) => soundingKey(timing, t.beat));
 
   // ── Expected notes depend on mode ────────────────────────────────────────
   const expectedNotes = useMemo(() => {
     // Notes still inside their own sustain window at the current beat.
-    const sustained = track.notes
-      .filter((n) => currentBeat >= n.startTime && currentBeat < n.startTime + n.duration)
-      .map((n) => n.midi);
+    const sustained = parseKey(sounding).map((i) => timing.notes[i].midi);
     if (practiceMode) {
       // Union of (current chord target) + (still-sustaining notes) so a held
       // bass/long note stays "expected" — and therefore green — after the
@@ -177,10 +189,7 @@ export default function App() {
       return Array.from(new Set<number>([...chordMidis, ...sustained]));
     }
     return sustained;
-  }, [practiceMode, chords, expectedChordIndex, track, currentBeat]);
-
-  const requestRef = useRef<number>();
-  const lastTimeRef = useRef<number>(0);
+  }, [practiceMode, chords, expectedChordIndex, timing, sounding]);
 
   // Keep the screen awake for the entire app session so the iPad doesn't
   // auto-lock while reading sheet music or practicing. Falls back to a silent
@@ -203,6 +212,14 @@ export default function App() {
       lastChordIndexRef.current = expectedChordIndex;
     }
   }, [expectedChordIndex]);
+
+  const goToChord = useCallback(
+    (index: number) => {
+      const clamped = Math.min(Math.max(index, 0), chords.length - 1);
+      if (clamped >= 0) transport.seek(chords[clamped].beat);
+    },
+    [chords, transport],
+  );
 
   useEffect(() => {
     if (!practiceMode) {
@@ -228,21 +245,13 @@ export default function App() {
     for (let i = 0; i < expected.length; i++) {
       if (!pressed.has(expected[i])) { allPressed = false; break; }
     }
-    if (allPressed) {
-      const nextIndex = Math.min(expectedChordIndex + 1, chords.length - 1);
-      setCurrentBeat(chords[nextIndex].beat);
-      scheduledUntilRef.current = chords[nextIndex].beat;
-    }
-  }, [practiceMode, activeNotes, expectedChordIndex, chords]);
+    if (allPressed) goToChord(expectedChordIndex + 1);
+  }, [practiceMode, activeNotes, expectedChordIndex, chords, goToChord]);
 
   // ── Practice mode: stop time-based playback when entering ─────────────────
   useEffect(() => {
-    if (practiceMode) {
-      setIsPlaying(false);
-      isPlayingRef.current = false;
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    }
-  }, [practiceMode]);
+    if (practiceMode) transport.pause();
+  }, [practiceMode, transport]);
 
   // ── Keyboard navigation for practice mode ────────────────────────────────
   useEffect(() => {
@@ -250,151 +259,100 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") {
         e.preventDefault();
-        const nextIndex = Math.min(expectedChordIndex + 1, chords.length - 1);
-        setCurrentBeat(chords[nextIndex].beat);
-        scheduledUntilRef.current = chords[nextIndex].beat;
+        goToChord(expectedChordIndex + 1);
       } else if (e.key === "ArrowLeft") {
         e.preventDefault();
-        const prevIndex = Math.max(expectedChordIndex - 1, 0);
-        setCurrentBeat(chords[prevIndex].beat);
-        scheduledUntilRef.current = chords[prevIndex].beat;
+        goToChord(expectedChordIndex - 1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [practiceMode, chords, expectedChordIndex]);
+  }, [practiceMode, expectedChordIndex, goToChord]);
+
+  // Dragging the falling notes in practice mode scrubs through the piece.
+  const navigateByDrag = useCallback(
+    (deltaBeat: number) => transport.seek(Math.max(0, transport.beat + deltaBeat)),
+    [transport],
+  );
 
   const togglePlayback = () => {
-    if (isPlaying) {
-      setIsPlaying(false);
-      isPlayingRef.current = false;
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    } else {
-      getSynth()?.warmUp();
-      setIsPlaying(true);
-      isPlayingRef.current = true;
-      lastTimeRef.current = performance.now();
-      requestRef.current = requestAnimationFrame(playLoop);
-    }
+    if (transport.playing) transport.pause();
+    else transport.play();
   };
 
-  const playLoop = (time: number) => {
-    if (!isPlayingRef.current) return;
-
-    const deltaTime = time - lastTimeRef.current;
-    lastTimeRef.current = time;
-
-    // BPM to beats per second, scaled by playback speed
-    const bps = (track.bpm * playbackSpeedRef.current) / 60;
-    // Delta time in seconds * beats per second
-    const deltaBeats = (deltaTime / 1000) * bps;
-
-    const prev = scheduledUntilRef.current;
-    let nextBeat = prev + deltaBeats;
-
-    // Loop around loosely
-    const lastBeat = track.notes[track.notes.length - 1].startTime + 4;
-    if (nextBeat > lastBeat) {
-      nextBeat = -LEAD_IN_BEATS;
-      scheduledUntilRef.current = nextBeat;
-      setCurrentBeat(nextBeat);
-      requestRef.current = requestAnimationFrame(playLoop);
-      return;
-    }
-
-    // Schedule notes whose start time falls within [prev, nextBeat).
-    // Kept outside setState so React StrictMode's double-invocation of the
-    // updater does not double-trigger notes. triggerNote schedules attack
-    // and release on the audio clock so simultaneous / repeated notes are
-    // not dropped by @tonejs/piano's _heldNotes guard.
-    const synth = getSynth();
-    if (synth && nextBeat > 0) {
-      const windowStart = Math.max(prev, 0);
-      track.notes.forEach((n) => {
-        if (n.startTime >= windowStart && n.startTime < nextBeat) {
-          synth.triggerNote(n.midi, n.duration / bps);
-        }
-      });
-    }
-
-    scheduledUntilRef.current = nextBeat;
-    setCurrentBeat(nextBeat);
-
-    requestRef.current = requestAnimationFrame(playLoop);
+  const stopPlayback = () => {
+    transport.pause();
+    transport.seek(-LEAD_IN_BEATS);
   };
-
-  useEffect(() => {
-    return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    };
-  }, []);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans select-none">
+    <div className="app-root bg-zinc-950 text-white flex flex-col font-sans select-none">
       {/* Header */}
-      <header className="flex items-center justify-between px-8 py-6 border-b border-zinc-800 bg-zinc-950">
-        <div className="flex items-center gap-8">
-          <h1 className="text-4xl font-black tracking-tighter uppercase leading-none">
+      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-3 md:px-8 md:py-6 border-b border-zinc-800 bg-zinc-950">
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
+          <h1 className="text-2xl md:text-4xl font-black tracking-tighter uppercase leading-none">
             Play Along <span className="text-zinc-500">Piano</span>
           </h1>
-          <div className="flex gap-2 items-center px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full">
-            <div
-              className={cn(
-                "w-2 h-2 rounded-full",
-                isListening
-                  ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"
-                  : "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]",
-              )}
-            ></div>
-            <span
-              className={cn(
-                "text-[10px] font-mono tracking-widest uppercase",
-                isListening ? "text-emerald-400" : "text-red-400",
-              )}
-            >
-              Mic {isListening ? "Active" : "Off"}
-            </span>
-          </div>
-          <div
-            className="flex gap-2 items-center px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full"
-            title={
-              !midiSupported
-                ? "Web MIDI not supported in this browser"
-                : midiConnected
-                  ? `Connected: ${midiDeviceNames.join(", ")}`
-                  : "No MIDI device detected"
-            }
-          >
-            <div
-              className={cn(
-                "w-2 h-2 rounded-full",
-                !midiSupported
-                  ? "bg-zinc-600"
-                  : midiConnected
+          <div className="flex flex-wrap gap-2">
+            <div className="flex gap-2 items-center px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full">
+              <div
+                className={cn(
+                  "w-2 h-2 rounded-full",
+                  isListening
                     ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"
-                    : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]",
-              )}
-            ></div>
-            <span
-              className={cn(
-                "text-[10px] font-mono tracking-widest uppercase truncate max-w-[200px]",
+                    : "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]",
+                )}
+              ></div>
+              <span
+                className={cn(
+                  "text-[10px] font-mono tracking-widest uppercase",
+                  isListening ? "text-emerald-400" : "text-red-400",
+                )}
+              >
+                Mic {isListening ? "Active" : "Off"}
+              </span>
+            </div>
+            <div
+              className="flex gap-2 items-center px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full"
+              title={
                 !midiSupported
-                  ? "text-zinc-500"
+                  ? "Web MIDI not supported in this browser"
                   : midiConnected
-                    ? "text-emerald-400"
-                    : "text-amber-400",
-              )}
+                    ? `Connected: ${midiDeviceNames.join(", ")}`
+                    : "No MIDI device detected"
+              }
             >
-              {!midiSupported
-                ? "MIDI N/A"
-                : midiConnected
-                  ? `MIDI: ${midiDeviceNames[0]}`
-                  : "MIDI: No Device"}
-            </span>
+              <div
+                className={cn(
+                  "w-2 h-2 rounded-full",
+                  !midiSupported
+                    ? "bg-zinc-600"
+                    : midiConnected
+                      ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"
+                      : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]",
+                )}
+              ></div>
+              <span
+                className={cn(
+                  "text-[10px] font-mono tracking-widest uppercase truncate max-w-[200px]",
+                  !midiSupported
+                    ? "text-zinc-500"
+                    : midiConnected
+                      ? "text-emerald-400"
+                      : "text-amber-400",
+                )}
+              >
+                {!midiSupported
+                  ? "MIDI N/A"
+                  : midiConnected
+                    ? `MIDI: ${midiDeviceNames[0]}`
+                    : "MIDI: No Device"}
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="flex gap-3 items-center">
+        <div className="flex flex-wrap gap-3 items-center">
           <div className="flex gap-1 items-center bg-zinc-900 border border-zinc-800 rounded-full p-1">
             {(["sheet", "keyboard", "synthesia", "both"] as const).map((m) => {
               const label =
@@ -451,7 +409,7 @@ export default function App() {
           </div>
           <button
             onClick={isListening ? stopListening : startListening}
-            className="px-6 py-2 bg-zinc-100 text-zinc-950 rounded-full font-bold text-sm uppercase hover:bg-white transition-colors"
+            className="px-4 md:px-6 py-2 bg-zinc-100 text-zinc-950 rounded-full font-bold text-sm uppercase hover:bg-white transition-colors"
           >
             {isListening ? "Stop Mic" : "Start Mic"}
           </button>
@@ -465,14 +423,14 @@ export default function App() {
       </header>
 
       {/* Main Content Workspace */}
-      <main className="flex-1 p-6 flex flex-col gap-6 overflow-hidden">
+      <main className="flex-1 p-2 sm:p-4 md:p-6 flex flex-col gap-3 md:gap-6 overflow-hidden">
         {(error || (midiError && midiSupported)) && (
           <div className="bg-red-500/20 text-red-400 p-4 rounded-lg border border-red-500/30 flex items-center justify-between">
             <span>{error || midiError}</span>
           </div>
         )}
 
-        <div className="flex-1 flex flex-col gap-6 relative">
+        <div className="flex-1 flex flex-col gap-3 md:gap-6 relative">
           {(viewMode === "both" || viewMode === "sheet") && (
             <div
               className={cn(
@@ -480,12 +438,15 @@ export default function App() {
                 viewMode === "sheet" ? "basis-full" : "basis-1/2",
               )}
             >
-              <SheetMusic
-                track={track}
-                currentBeat={currentBeat}
-                expectedNotes={expectedNotes}
-                playedNotes={playedNotesFinal}
-              />
+              <Suspense
+                fallback={
+                  <div className="w-full h-full min-h-[200px] flex items-center justify-center text-xs font-mono uppercase tracking-widest text-zinc-400">
+                    Loading sheet music…
+                  </div>
+                }
+              >
+                <SheetMusic timing={timing} transport={transport} playedNotes={playedNotesFinal} />
+              </Suspense>
             </div>
           )}
 
@@ -511,23 +472,13 @@ export default function App() {
                   <div className="flex-1 min-h-0 flex px-2 pt-2 pb-0">
                     <div className="flex-1 min-h-[260px] rounded-t-2xl overflow-hidden border border-zinc-800/80 bg-black relative">
                       <FallingNotes
-                        track={track}
-                        currentBeat={currentBeat}
+                        timing={timing}
+                        transport={transport}
                         expectedNotes={expectedNotes}
                         playedNotes={playedNotesFinal}
                         startMidi={21}
                         endMidi={108}
-                        onNavigate={
-                          practiceMode
-                            ? (deltaBeat: number) => {
-                                setCurrentBeat((b) => {
-                                  const next = Math.max(0, b + deltaBeat);
-                                  scheduledUntilRef.current = next;
-                                  return next;
-                                });
-                              }
-                            : undefined
-                        }
+                        onNavigate={practiceMode ? navigateByDrag : undefined}
                       />
                     </div>
                   </div>
@@ -542,7 +493,7 @@ export default function App() {
                       variant="flow"
                       dim={effectsEnabled ? keyboardDim : 1}
                       topLight={effectsEnabled}
-                      onSynthesizedNoteChanged={setSynthesizedNote}
+                      onTouchNotesChange={setTouchNotes}
                     />
                   </div>
                 </>
@@ -553,7 +504,7 @@ export default function App() {
                   activeNotes={activeNotes}
                   expectedNotes={expectedNotes}
                   playedNotes={playedNotesFinal}
-                  onSynthesizedNoteChanged={setSynthesizedNote}
+                  onTouchNotesChange={setTouchNotes}
                 />
               )}
             </div>
@@ -562,20 +513,17 @@ export default function App() {
       </main>
 
       {/* Bottom Control Bar */}
-      <footer className="h-24 bg-zinc-900 border-t border-zinc-800 px-8 flex items-center justify-between z-10">
-        <div className="flex items-center gap-10">
+      <footer className="min-h-24 bg-zinc-900 border-t border-zinc-800 px-4 py-3 md:px-8 flex flex-wrap items-center justify-between gap-x-10 gap-y-3 z-10">
+        <div className="flex flex-wrap items-center gap-x-4 md:gap-x-10 gap-y-3">
           {practiceMode ? (
             /* ── Practice mode controls ───────────────────────────── */
             <div className="flex items-center gap-3">
               <button
-                onClick={() => {
-                  const prevIndex = Math.max(expectedChordIndex - 1, 0);
-                  setCurrentBeat(chords[prevIndex].beat);
-                  scheduledUntilRef.current = chords[prevIndex].beat;
-                }}
+                onClick={() => goToChord(expectedChordIndex - 1)}
                 disabled={expectedChordIndex <= 0}
                 className="w-12 h-12 rounded-full border border-violet-700 flex items-center justify-center text-violet-300 hover:bg-violet-900/50 disabled:opacity-30 transition-colors"
                 title="Previous chord (←)"
+                aria-label="Previous chord"
               >
                 <ChevronLeft className="w-5 h-5" />
               </button>
@@ -587,22 +535,16 @@ export default function App() {
                 </span>
               </div>
               <button
-                onClick={() => {
-                  const nextIndex = Math.min(expectedChordIndex + 1, chords.length - 1);
-                  setCurrentBeat(chords[nextIndex].beat);
-                  scheduledUntilRef.current = chords[nextIndex].beat;
-                }}
+                onClick={() => goToChord(expectedChordIndex + 1)}
                 disabled={expectedChordIndex >= chords.length - 1}
                 className="w-12 h-12 rounded-full border border-violet-700 flex items-center justify-center text-violet-300 hover:bg-violet-900/50 disabled:opacity-30 transition-colors"
                 title="Next chord (→)"
+                aria-label="Next chord"
               >
                 <ChevronRight className="w-5 h-5" />
               </button>
               <button
-                onClick={() => {
-                  setCurrentBeat(0);
-                  scheduledUntilRef.current = 0;
-                }}
+                onClick={() => transport.seek(0)}
                 className="ml-2 px-3 py-1 rounded-full border border-zinc-700 text-[10px] font-mono uppercase text-zinc-400 hover:text-zinc-100 hover:border-zinc-500 transition-colors"
                 title="Restart from beginning"
               >
@@ -613,19 +555,16 @@ export default function App() {
             /* ── Normal play controls ─────────────────────────────── */
             <div className="flex gap-4">
               <button
-                onClick={() => {
-                  setIsPlaying(false);
-                  isPlayingRef.current = false;
-                  if (requestRef.current) cancelAnimationFrame(requestRef.current);
-                  scheduledUntilRef.current = -LEAD_IN_BEATS;
-                  setCurrentBeat(-LEAD_IN_BEATS);
-                }}
+                onClick={stopPlayback}
+                aria-label="Stop"
+                title="Stop and rewind"
                 className="w-12 h-12 rounded-full border border-zinc-700 flex items-center justify-center text-zinc-400 hover:bg-zinc-800 transition-colors"
               >
                 <Square className="w-4 h-4 fill-current" />
               </button>
               <button
                 onClick={togglePlayback}
+                aria-label={isPlaying ? "Pause" : "Play"}
                 className="w-12 h-12 rounded-full bg-emerald-500 text-zinc-950 flex items-center justify-center hover:bg-emerald-400 transition-colors"
               >
                 {isPlaying ? (
@@ -638,17 +577,13 @@ export default function App() {
           )}
           {/* Progress bar with marker pins overlaid above (no extra layout
               space taken — pins are absolutely positioned). */}
-          <div className="relative w-96">
+          <div className="relative w-40 sm:w-64 xl:w-96">
             <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden relative">
-              <div
-                className={cn(
-                  "absolute h-full transition-all duration-100",
-                  practiceMode ? "bg-violet-400" : "bg-zinc-100",
-                )}
-                style={{
-                  width: `${Math.min(100, Math.max(0, (currentBeat / totalBeats) * 100))}%`,
-                }}
-              ></div>
+              <ProgressFill
+                transport={transport}
+                totalBeats={totalBeats}
+                className={practiceMode ? "bg-violet-400" : "bg-zinc-100"}
+              />
             </div>
             {markers.map((beat, i) => (
               <MarkerPin
@@ -663,13 +598,12 @@ export default function App() {
           <button
             onClick={addMarker}
             title="Add marker at current position"
+            aria-label="Add marker"
             className="w-8 h-8 rounded-full border border-amber-600/60 flex items-center justify-center text-amber-400 hover:bg-amber-900/30 transition-colors"
           >
             <BookmarkPlus className="w-4 h-4" />
           </button>
-          <div className="font-mono text-sm tracking-tighter text-zinc-400">
-            {`${Math.floor(currentBeat).toString().padStart(3, "0")} bts`}
-          </div>
+          <BeatCounter transport={transport} />
         </div>
 
         <div className="flex items-center gap-6">
@@ -697,7 +631,8 @@ export default function App() {
                 step={SPEED_STEP}
                 value={playbackSpeed}
                 onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-                className="w-48 accent-emerald-500 cursor-pointer"
+                aria-label="Playback speed"
+                className="w-32 sm:w-48 accent-emerald-500 cursor-pointer"
               />
             </div>
             <div className="flex justify-between text-[8px] font-mono text-zinc-600 tracking-widest">
@@ -748,6 +683,39 @@ export default function App() {
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+/** Progress fill, moved directly from the transport (no React render per frame). */
+function ProgressFill({
+  transport,
+  totalBeats,
+  className,
+}: {
+  transport: Transport;
+  totalBeats: number;
+  className: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const update = () => {
+      const p = Math.min(1, Math.max(0, transport.beat / totalBeats));
+      if (ref.current) ref.current.style.transform = `scaleX(${p})`;
+    };
+    update();
+    return transport.subscribe(update);
+  }, [transport, totalBeats]);
+  return <div ref={ref} className={cn("absolute inset-0 origin-left", className)} />;
+}
+
+/** Whole-beat counter; re-renders once per beat. */
+function BeatCounter({ transport }: { transport: Transport }) {
+  const beat = useTransportValue(transport, (t) => Math.floor(t.beat));
+  const digits = Math.abs(beat).toString().padStart(3, "0");
+  return (
+    <div className="font-mono text-sm tracking-tighter text-zinc-400 tabular-nums">
+      {`${beat < 0 ? "-" : ""}${digits} bts`}
     </div>
   );
 }
