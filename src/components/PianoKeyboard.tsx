@@ -26,7 +26,7 @@ type KeyState = "idle" | "expected" | "correct" | "wrong" | "active";
 const BLACK_BASE =
   "absolute top-0 rounded-b-[3px] border border-black transition-colors duration-75 cursor-pointer touch-none z-10";
 const WHITE_BASE =
-  "flex-1 rounded-b-[4px] border-x border-b border-black/40 transition-colors duration-75 flex items-end justify-center pb-2 cursor-pointer touch-none relative z-0";
+  "flex-1 rounded-b-[4px] border-x border-b border-black/40 transition-colors duration-75 flex items-end justify-center pb-2 cursor-pointer touch-none relative";
 
 // Realistic keys: white keys shaded like ivory with a darker lip at the front,
 // black keys glossy with a lighter front edge. Expected keys light up mint like
@@ -89,6 +89,9 @@ function whiteKeyClip(midi: number, startMidi: number, endMidi: number): string 
   if (right) return `polygon(0 0, ${b} 0, ${b} ${h}, 100% ${h}, 100% 100%, 0 100%)`;
   return undefined;
 }
+
+const RAIL_GLOW_GRADIENT =
+  "radial-gradient(ellipse at center, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.18) 40%, transparent 70%)";
 
 const SPOTLIGHT_GRADIENT =
   "linear-gradient(to bottom, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.45) 18%, rgba(255,255,255,0.12) 45%, transparent 78%)";
@@ -298,7 +301,11 @@ const PianoKeyboardImpl: React.FC<PianoKeyboardProps> = ({
           );
         }
         return (
-          <Key key={key.midi} midi={key.midi} className={`${WHITE_BASE} ${KEY_CLASSES.white[state][variantIndex]}`} />
+          <Key
+            key={key.midi}
+            midi={key.midi}
+            className={`${WHITE_BASE} ${state === "idle" ? "z-0" : "z-[5]"} ${KEY_CLASSES.white[state][variantIndex]}`}
+          />
         );
       })}
 
@@ -335,32 +342,39 @@ const PianoKeyboardImpl: React.FC<PianoKeyboardProps> = ({
         );
       })}
 
-      {/* Per-pressed-key spotlight: top-down white highlight + soft surround glow. */}
+      {/* Pressed keys under stage lighting: a top-down highlight clipped to the key's
+          visible shape, so the neighbouring black keys stay black, and a soft glow
+          where the key meets the rail. */}
       {topLight && keys.map((key) => {
         if (!activeNotes.has(key.midi)) return null;
         const leftPct = key.precedingWhite * whiteKeyWidth;
-        const left = key.isBlack
-          ? `calc(${leftPct}% - ${whiteKeyWidth / 3}%)`
-          : `${leftPct}%`;
-        const width = key.isBlack ? `${whiteKeyWidth / 1.5}%` : `${whiteKeyWidth}%`;
-        const height = key.isBlack ? "60%" : "100%";
+        const clip = key.isBlack ? undefined : whiteKeyClip(key.midi, startMidi, endMidi);
+        const centerPct = key.isBlack ? leftPct : leftPct + whiteKeyWidth / 2;
         return (
-          <div
-            key={`spot-${key.midi}`}
-            className={cn(
-              "absolute top-0 pointer-events-none z-30",
-              key.isBlack ? "rounded-b-[3px]" : "rounded-b-[4px]",
-            )}
-            style={{
-              left,
-              width,
-              height,
-              background: SPOTLIGHT_GRADIENT,
-              boxShadow: isMobile
-                ? "0 0 18px 4px rgba(255,255,255,0.45)"
-                : "0 0 28px 6px rgba(255,255,255,0.55), 0 -10px 36px 8px rgba(255,255,255,0.32)",
-            }}
-          />
+          <React.Fragment key={`spot-${key.midi}`}>
+            <div
+              className={cn(
+                "absolute top-0 pointer-events-none z-30",
+                key.isBlack ? "rounded-b-[3px]" : "rounded-b-[4px]",
+              )}
+              style={{
+                left: key.isBlack ? `calc(${leftPct}% - ${whiteKeyWidth / 3}%)` : `${leftPct}%`,
+                width: key.isBlack ? `${whiteKeyWidth / 1.5}%` : `${whiteKeyWidth}%`,
+                height: key.isBlack ? "60%" : "100%",
+                background: SPOTLIGHT_GRADIENT,
+                clipPath: clip,
+                WebkitClipPath: clip,
+              }}
+            />
+            <div
+              className="absolute -top-2.5 h-5 pointer-events-none z-30"
+              style={{
+                left: `${centerPct - whiteKeyWidth * 0.8}%`,
+                width: `${whiteKeyWidth * 1.6}%`,
+                background: RAIL_GLOW_GRADIENT,
+              }}
+            />
+          </React.Fragment>
         );
       })}
     </div>
