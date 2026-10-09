@@ -6,6 +6,7 @@ import {
   ChevronRight,
   GraduationCap,
   BookmarkPlus,
+  X,
 } from "lucide-react";
 import { PianoKeyboard } from "./components/PianoKeyboard";
 import { FallingNotes } from "./components/FallingNotes";
@@ -13,7 +14,7 @@ import { MarkerPin } from "./components/MarkerPin";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { MOONLIGHT_SONATA } from "./lib/trackData";
 import { usePitchDetector } from "./hooks/usePitchDetector";
-import { useMidiInput } from "./hooks/useMidiInput";
+import { useMidiInput, type MidiStatus } from "./hooks/useMidiInput";
 import { useIsMobile, useWakeLock } from "./hooks/useDeviceCaps";
 import { useTransportValue } from "./hooks/useTransport";
 import { cn } from "./lib/utils";
@@ -46,6 +47,9 @@ export default function App() {
     deviceNames: midiDeviceNames,
     error: midiError,
     supported: midiSupported,
+    status: midiStatus,
+    connect: connectMidi,
+    dismissError: dismissMidiError,
   } = useMidiInput();
   const [touchNotes, setTouchNotes] = useState<number[]>([]);
 
@@ -312,43 +316,13 @@ export default function App() {
                 Mic {isListening ? "Active" : "Off"}
               </span>
             </div>
-            <div
-              className="flex gap-2 items-center px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full"
-              title={
-                !midiSupported
-                  ? "Web MIDI not supported in this browser"
-                  : midiConnected
-                    ? `Connected: ${midiDeviceNames.join(", ")}`
-                    : "No MIDI device detected"
-              }
-            >
-              <div
-                className={cn(
-                  "w-2 h-2 rounded-full",
-                  !midiSupported
-                    ? "bg-zinc-600"
-                    : midiConnected
-                      ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"
-                      : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]",
-                )}
-              ></div>
-              <span
-                className={cn(
-                  "text-[10px] font-mono tracking-widest uppercase truncate max-w-[200px]",
-                  !midiSupported
-                    ? "text-zinc-500"
-                    : midiConnected
-                      ? "text-emerald-400"
-                      : "text-amber-400",
-                )}
-              >
-                {!midiSupported
-                  ? "MIDI N/A"
-                  : midiConnected
-                    ? `MIDI: ${midiDeviceNames[0]}`
-                    : "MIDI: No Device"}
-              </span>
-            </div>
+            <MidiStatusPill
+              supported={midiSupported}
+              status={midiStatus}
+              connected={midiConnected}
+              deviceNames={midiDeviceNames}
+              onConnect={connectMidi}
+            />
           </div>
         </div>
 
@@ -424,9 +398,34 @@ export default function App() {
 
       {/* Main Content Workspace */}
       <main className="flex-1 p-2 sm:p-4 md:p-6 flex flex-col gap-3 md:gap-6 overflow-hidden">
-        {(error || (midiError && midiSupported)) && (
+        {error && (
           <div className="bg-red-500/20 text-red-400 p-4 rounded-lg border border-red-500/30 flex items-center justify-between">
-            <span>{error || midiError}</span>
+            <span>{error}</span>
+          </div>
+        )}
+        {midiError && midiSupported && (
+          <div
+            role="status"
+            className="bg-amber-500/10 text-amber-200 p-3 md:p-4 rounded-lg border border-amber-500/30 flex items-start justify-between gap-3"
+          >
+            <span className="text-sm leading-relaxed">{midiError}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={connectMidi}
+                className="px-3 py-1 rounded-full border border-amber-500/50 text-[10px] font-bold uppercase tracking-widest text-amber-200 hover:bg-amber-500/20 transition-colors"
+              >
+                Connect MIDI
+              </button>
+              <button
+                type="button"
+                onClick={dismissMidiError}
+                aria-label="Dismiss"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-amber-300/80 hover:bg-amber-500/20 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -716,6 +715,84 @@ function BeatCounter({ transport }: { transport: Transport }) {
   return (
     <div className="font-mono text-sm tracking-tighter text-zinc-400 tabular-nums">
       {`${beat < 0 ? "-" : ""}${digits} bts`}
+    </div>
+  );
+}
+
+/**
+ * Header MIDI status. While MIDI still has to be connected it is a button:
+ * access is requested from a click unless it was already granted (Firefox
+ * requires that, and it avoids prompting everyone on page load).
+ */
+function MidiStatusPill({
+  supported,
+  status,
+  connected,
+  deviceNames,
+  onConnect,
+}: {
+  supported: boolean;
+  status: MidiStatus;
+  connected: boolean;
+  deviceNames: string[];
+  onConnect: () => void;
+}) {
+  const canConnect = status === "idle" || status === "blocked";
+  const pillClass = "flex gap-2 items-center px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full";
+  const content = (
+    <>
+      <div
+        className={cn(
+          "w-2 h-2 rounded-full",
+          !supported
+            ? "bg-zinc-600"
+            : connected
+              ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"
+              : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]",
+        )}
+      ></div>
+      <span
+        className={cn(
+          "text-[10px] font-mono tracking-widest uppercase truncate max-w-[200px]",
+          !supported ? "text-zinc-500" : connected ? "text-emerald-400" : "text-amber-400",
+        )}
+      >
+        {!supported
+          ? "MIDI N/A"
+          : status === "connecting"
+            ? "MIDI: Connecting…"
+            : canConnect
+              ? "MIDI: Connect"
+              : connected
+                ? `MIDI: ${deviceNames[0]}`
+                : "MIDI: No Device"}
+      </span>
+    </>
+  );
+  if (canConnect) {
+    return (
+      <button
+        type="button"
+        onClick={onConnect}
+        title="Connect a MIDI keyboard"
+        className={cn(pillClass, "cursor-pointer transition-colors hover:border-amber-500/60 hover:bg-zinc-800")}
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div
+      className={pillClass}
+      title={
+        !supported
+          ? "Web MIDI not supported in this browser"
+          : connected
+            ? `Connected: ${deviceNames.join(", ")}`
+            : "No MIDI device detected"
+      }
+    >
+      {content}
     </div>
   );
 }

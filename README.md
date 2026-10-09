@@ -44,6 +44,14 @@ Browsers only allow the microphone on HTTPS or `localhost`. To test the mic on a
 | `npm run lint`    | TypeScript type-check (`tsc --noEmit`)              |
 | `npm run tunnel`  | Expose the dev server over HTTPS with cloudflared   |
 
+## MIDI keyboards
+
+Click **MIDI: Connect** in the header the first time; after that the app reconnects on its own.
+
+- **Chrome / Edge / Opera:** allow the MIDI prompt.
+- **Firefox:** Web MIDI is enabled per site through a one-time *site permission add-on*. With the keyboard plugged in, click **MIDI: Connect**, then **Continue to Installation** and **Add**. Firefox refuses MIDI access while no MIDI device is connected (restart Firefox if you plugged the keyboard in after starting it), and reports every refusal as "WebMIDI requires a site permission add-on to activate". The add-on can be removed again under *Add-ons and themes → Site permissions*.
+- **Safari (macOS / iOS):** no Web MIDI. Use the microphone, or a Web MIDI–enabled iOS browser app.
+
 ## How playback works
 
 Playback is built to stay smooth on phones and tablets:
@@ -57,7 +65,7 @@ Playback is built to stay smooth on phones and tablets:
 
 Modern Chrome, Edge, Firefox and Safari. `@vitejs/plugin-legacy` also emits an ES5 bundle with polyfills for older browsers (e.g. old iPads running the "Web MIDI Browser" app), but the Tailwind CSS v4 styles need Safari/iOS 15.4 or newer to render correctly.
 
-Web MIDI input works in Chrome/Edge (and in Web MIDI-enabled iOS browsers). The microphone needs HTTPS.
+Web MIDI input works in Chrome/Edge, Firefox (with its site permission add-on, see above) and Web MIDI-enabled iOS browsers. The microphone needs HTTPS.
 
 ## Credits
 
