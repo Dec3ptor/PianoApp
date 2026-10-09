@@ -3,6 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Play along with sheet music, a virtual keyboard and falling notes. Uses the microphone or a MIDI keyboard to follow your playing." />
+    <meta name="theme-color" content="#09090b" />
+    <!-- Full-screen when added to the iPad/iPhone home screen. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Piano" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>Play Along Piano</title>
     <style>
       #__err {
@@ -22,7 +31,7 @@
           if (!box) {
             box = document.createElement('div');
             box.id = '__err';
-            box.innerHTML = '<h1>App failed to start</h1><div id="__err_body"></div><div class="ua"></div>';
+            box.innerHTML = '<h1>Something went wrong</h1><div id="__err_body"></div><div class="ua"></div>';
             document.body.appendChild(box);
             box.querySelector('.ua').textContent = 'UA: ' + navigator.userAgent;
           }
@@ -32,6 +41,8 @@
         }
         window.addEventListener('error', function (e) {
           var m = e.message || 'Unknown error';
+          // Browser notice reported as an error event; not an app failure.
+          if (/ResizeObserver loop/.test(m)) return;
           if (e.filename) m += '\nat ' + e.filename + ':' + e.lineno + ':' + e.colno;
           if (e.error && e.error.stack) m += '\n' + e.error.stack;
           show(m);

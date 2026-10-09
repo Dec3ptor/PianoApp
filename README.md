@@ -1,49 +1,64 @@
 # Play Along Piano
 
-Responsive play-along piano with sheet music, virtual keyboard, and a Synthesia-style falling-notes view. Uses the microphone for polyphonic pitch detection so you can practice along.
+Responsive play-along piano with sheet music, virtual keyboard, and a Synthesia-style falling-notes view. Uses the microphone for polyphonic pitch detection (or a MIDI keyboard via Web MIDI) so you can practice along.
 
-## Prerequisites
+## GitHub Pages
 
-- Node.js (LTS)
+The workflow in `.github/workflows/deploy.yml` builds the app and publishes it to GitHub Pages on every push to `main` (pull requests are type-checked and built, not deployed).
 
-## Install
+One-time setup:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+2. Push to `main` (or run the workflow manually from the Actions tab).
+3. The site is served at `https://<user>.github.io/<repo>/`, e.g. `https://dec3ptor.github.io/PianoApp/`.
+
+GitHub Pages on a **private** repository needs a paid plan (GitHub Pro/Team/Enterprise); on the free plan the repository has to be public. The published site itself is public either way.
+
+The build reads the site's sub-path from `BASE_PATH` (the workflow sets it from the Pages configuration), so it also works with a custom domain.
+
+GitHub Pages is served over HTTPS, which the browser requires for microphone access, so the mic works there without any certificate setup. On an iPad/iPhone, *Share → Add to Home Screen* runs it full-screen.
+
+## Local development
+
+Prerequisite: Node.js 20 or newer.
 
 ```
 npm install
-```
-
-## Run
-
-Dev server (with HMR):
-
-```
-npm run dev
+npm run dev        # http://localhost:3000, also reachable on your LAN
 ```
 
 Production build + preview:
 
 ```
-npm run start
+npm run start      # build, then serve dist/ on port 3005
 ```
 
-Both servers bind to `0.0.0.0` over HTTPS (self-signed cert via `@vitejs/plugin-basic-ssl`):
+Browsers only allow the microphone on HTTPS or `localhost`. To test the mic on another device on your LAN, use the deployed GitHub Pages site or `npm run tunnel` (Cloudflare tunnel, needs `cloudflared.exe`).
 
-- Dev:     `https://localhost:3000`  and  `https://<your-LAN-ip>:3000`
-- Preview: `https://localhost:4173`  and  `https://<your-LAN-ip>:4173`
+| Script            | What it does                                        |
+| ----------------- | --------------------------------------------------- |
+| `npm run dev`     | Vite dev server, LAN-accessible, port 3000          |
+| `npm run build`   | Production build to `dist/` (`BASE_PATH` sets the sub-path) |
+| `npm run preview` | Serve `dist/`, LAN-accessible, port 3005            |
+| `npm run start`   | `build` then `preview`                              |
+| `npm run lint`    | TypeScript type-check (`tsc --noEmit`)              |
+| `npm run tunnel`  | Expose the dev server over HTTPS with cloudflared   |
 
-## Using on other devices on your LAN
+## How playback works
 
-1. Find your machine's LAN IP (e.g. `ipconfig` on Windows - look for IPv4 on your active adapter).
-2. On the phone/laptop/tablet, open `https://<that-ip>:3000` (or `:4173` for preview).
-3. The browser will warn about the self-signed certificate - accept it once per device. This is required: browsers only allow microphone access over HTTPS (or `localhost`), so plain HTTP over the LAN will not work.
-4. Make sure Windows Firewall allows inbound connections on the chosen port for your Private network.
+Playback is built to stay smooth on phones and tablets:
 
-## Scripts
+- **Audio is scheduled on the audio clock.** `src/lib/transport.ts` hands notes to Web Audio a little ahead of time (150 ms on desktop, 300 ms on mobile) with exact start times, so note timing doesn't depend on how busy the page is. The playhead follows the audio clock too, compensated for output latency.
+- **One lightweight sampler.** `src/lib/piano.ts` plays the Salamander Grand Piano samples directly with Web Audio (one buffer source and gain per note, one shared `AudioContext`). Only the velocity layer the app uses is loaded, the samples this piece needs are fetched and decoded in the background when the page opens, and they're kept in Cache Storage for the next visit.
+- **No React render per frame.** Components subscribe to the transport and only re-render when something they show changes (a note starts or ends, a new measure). The falling notes move with a single CSS transform per frame; the sheet music re-renders once per measure and highlights notes by toggling CSS classes. VexFlow is only downloaded when a sheet view is opened.
+- Playback pauses when the page is hidden or when iOS takes the audio away (phone call, Siri).
 
-| Script           | What it does                                       |
-| ---------------- | -------------------------------------------------- |
-| `npm run dev`    | Vite dev server, HTTPS, LAN-accessible, port 3000  |
-| `npm run build`  | Production build to `dist/`                        |
-| `npm run preview`| Serve `dist/` over HTTPS, LAN-accessible, port 4173|
-| `npm run start`  | `build` then `preview`                             |
-| `npm run lint`   | TypeScript type-check (`tsc --noEmit`)             |
+## Browser support
+
+Modern Chrome, Edge, Firefox and Safari. `@vitejs/plugin-legacy` also emits an ES5 bundle with polyfills for older browsers (e.g. old iPads running the "Web MIDI Browser" app), but the Tailwind CSS v4 styles need Safari/iOS 15.4 or newer to render correctly.
+
+Web MIDI input works in Chrome/Edge (and in Web MIDI-enabled iOS browsers). The microphone needs HTTPS.
+
+## Credits
+
+Piano sound: Salamander Grand Piano by Alexander Holm (CC-BY 3.0), loaded from the [tambien/Piano](https://github.com/tambien/Piano) sample set.

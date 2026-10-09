@@ -36,11 +36,10 @@ function detect(): boolean {
   return coarse || small;
 }
 
-// Module-level singletons so the silent-video fallback persists across
+// Module-level singleton so the silent-video fallback persists across
 // component re-renders and is only ever attached to the DOM once.
 let noSleepInstance: NoSleep | null = null;
 let noSleepEnabled = false;
-let gestureListenerAttached = false;
 
 function getNoSleep(): NoSleep {
   if (!noSleepInstance) noSleepInstance = new NoSleep();
@@ -52,12 +51,12 @@ function getNoSleep(): NoSleep {
  *   1. Screen Wake Lock API – Safari 16.4+, Chrome 84+. Best when available.
  *   2. NoSleep.js fallback – silent muted looping video that iOS treats as
  *      active media, preventing the auto-lock. Required for older iPads
- *      whose Safari/WKWebView (e.g. iOS 12-15) lacks Wake Lock. Must be
- *      started from a user gesture, so we lazily attach `click`/`touchend`
- *      listeners until the first real interaction enables it.
+ *      whose Safari/WKWebView (e.g. iOS 12-15) lacks Wake Lock. Only used
+ *      when the API is missing.
  *
- * Re-requests the native lock whenever the page becomes visible again, because
- * the browser releases it automatically when the tab is hidden.
+ * Safari only grants the lock (and only starts the video) from a user
+ * gesture, so taps/clicks retry until it sticks. The browser releases the
+ * lock whenever the page is hidden, so it is requested again on return.
  */
 export function useWakeLock(enabled: boolean) {
   useEffect(() => {
@@ -66,29 +65,34 @@ export function useWakeLock(enabled: boolean) {
 
     let cancelled = false;
     let sentinel: WakeLockSentinelLike | null = null;
+    let requesting = false;
 
     // ── Strategy 1: native Screen Wake Lock API ──────────────────────────
-    const anyNav = navigator as unknown as {
+    const wakeLock = (navigator as unknown as {
       wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinelLike> };
-    };
+    }).wakeLock;
+    const hasNative = !!wakeLock && typeof wakeLock.request === "function";
     const requestNative = () => {
-      if (!anyNav.wakeLock || typeof anyNav.wakeLock.request !== "function") return;
-      anyNav.wakeLock
+      if (!hasNative || cancelled || requesting || document.visibilityState !== "visible") return;
+      if (sentinel && !sentinel.released) return;
+      requesting = true;
+      wakeLock!
         .request("screen")
         .then((s) => {
           if (cancelled) s.release?.().catch(() => {});
           else sentinel = s;
         })
-        .catch(() => {});
+        .catch(() => {})
+        .then(() => {
+          requesting = false;
+        });
     };
-    requestNative();
 
     // ── Strategy 2: NoSleep.js silent-video fallback (older iOS) ─────────
     const enableNoSleep = () => {
       if (noSleepEnabled || cancelled) return;
       try {
-        const ns = getNoSleep();
-        const ret = ns.enable();
+        const ret = getNoSleep().enable();
         // ns.enable() returns a Promise on modern browsers.
         if (ret && typeof (ret as Promise<void>).then === "function") {
           (ret as Promise<void>).then(() => {
@@ -101,25 +105,23 @@ export function useWakeLock(enabled: boolean) {
         /* no-op */
       }
     };
-    if (!noSleepEnabled && !gestureListenerAttached) {
-      gestureListenerAttached = true;
-      const opts: AddEventListenerOptions = { once: true, capture: true };
-      // iOS Safari requires a real user gesture; both `touchend` and `click`
-      // qualify. Attach to whichever fires first.
-      document.addEventListener("touchend", enableNoSleep, opts);
-      document.addEventListener("click", enableNoSleep, opts);
-      document.addEventListener("keydown", enableNoSleep, opts);
-    }
 
-    // ── Re-acquire native lock when tab becomes visible again ───────────
-    const onVisibility = () => {
-      if (document.visibilityState === "visible" && !sentinel) requestNative();
+    const onGesture = () => {
+      if (hasNative) requestNative();
+      else enableNoSleep();
     };
-    document.addEventListener("visibilitychange", onVisibility);
+    requestNative();
+    // iOS Safari requires a real user gesture; `touchend`, `click` and
+    // `keydown` qualify.
+    const gestureOpts: AddEventListenerOptions = { capture: true, passive: true };
+    const gestures = ["touchend", "click", "keydown"];
+    gestures.forEach((g) => document.addEventListener(g, onGesture, gestureOpts));
+    document.addEventListener("visibilitychange", requestNative);
 
     return () => {
       cancelled = true;
-      document.removeEventListener("visibilitychange", onVisibility);
+      gestures.forEach((g) => document.removeEventListener(g, onGesture, gestureOpts));
+      document.removeEventListener("visibilitychange", requestNative);
       sentinel?.release?.().catch(() => {});
       sentinel = null;
       // Leave NoSleep enabled across hook re-runs to avoid the user having
@@ -129,5 +131,6 @@ export function useWakeLock(enabled: boolean) {
 }
 
 type WakeLockSentinelLike = {
+  released?: boolean;
   release?: () => Promise<void>;
 };

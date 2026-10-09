@@ -31,8 +31,9 @@ export function freqToNoteName(freq: number): string {
 export function getPolyphonicNotes(
   analyser: AnalyserNode,
   sampleRate: number,
+  // Pass a reused buffer when calling every frame to avoid garbage.
+  buffer: Float32Array = new Float32Array(analyser.frequencyBinCount),
 ): number[] {
-  const buffer = new Float32Array(analyser.frequencyBinCount);
   analyser.getFloatFrequencyData(buffer); // dB values (-100 to 0)
 
   const fftSize = analyser.fftSize;
@@ -75,6 +76,7 @@ export function getPolyphonicNotes(
   const activeNotes = Array.from(midiEnergy.entries())
     .map(([midi, energy]) => ({ midi, energy }))
     .sort((a, b) => b.energy - a.energy);
+  const byMidi = new Map(activeNotes.map((n) => [n.midi, n]));
 
   // Harmonic suppression: real piano strings produce strong harmonics at integer multiples
   // We heavily penalize harmonics (octave, octave+fifth, 2 octaves) if their fundamental is playing
@@ -85,11 +87,10 @@ export function getPolyphonicNotes(
     // Intervals: 12 (octave), 19 (octave+5th), 24 (2 octaves), 28, 31, 36...
     const harmonics = [12, 19, 24, 28, 31, 36];
     for (const h of harmonics) {
-      const harmMidi = fundamental.midi + h;
-      const harmIndex = activeNotes.findIndex((n) => n.midi === harmMidi);
-      if (harmIndex !== -1) {
+      const harmonic = byMidi.get(fundamental.midi + h);
+      if (harmonic) {
         // Suppress harmonic energy less aggressively
-        activeNotes[harmIndex].energy -= fundamental.energy * 0.4;
+        harmonic.energy -= fundamental.energy * 0.4;
       }
     }
   }

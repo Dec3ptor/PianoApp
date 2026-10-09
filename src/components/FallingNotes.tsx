@@ -1,10 +1,12 @@
-import React, { useMemo, useRef } from "react";
-import { Track } from "../lib/trackData";
+import React, { useLayoutEffect, useMemo, useRef } from "react";
+import type { Transport } from "../lib/transport";
+import { lowerBound, parseKey, soundingKey, type TrackTiming } from "../lib/trackTiming";
 import { useIsMobile } from "../hooks/useDeviceCaps";
+import { useTransportValue } from "../hooks/useTransport";
 
 interface FallingNotesProps {
-  track: Track;
-  currentBeat: number;
+  timing: TrackTiming;
+  transport: Transport;
   expectedNotes?: number[];
   playedNotes?: number[];
   startMidi?: number;
@@ -15,17 +17,36 @@ interface FallingNotesProps {
 
 const BLACK_KEY_CLASSES = new Set([1, 3, 6, 8, 10]);
 const BEATS_VISIBLE = 4;
+/** Percent of the panel height per beat. */
+const PCT_PER_BEAT = 100 / BEATS_VISIBLE;
+/**
+ * The notes are laid out on a strip relative to a base beat that only moves
+ * every few beats; in between, the strip is just translated each frame.
+ */
+const REBASE_BEATS = 4;
+const NO_NOTES: number[] = [];
 
+const baseFor = (beat: number) => Math.floor(beat / REBASE_BEATS) * REBASE_BEATS;
+
+/**
+ * Synthesia-style falling notes. During playback the only per-frame work is
+ * one CSS transform on the strip holding the notes, which the compositor
+ * applies without layout, paint or a React render. The notes themselves are
+ * re-rendered only when one starts/stops sounding or the strip is rebased.
+ */
 const FallingNotesImpl: React.FC<FallingNotesProps> = ({
-  track,
-  currentBeat,
-  expectedNotes = [],
-  playedNotes = [],
+  timing,
+  transport,
+  expectedNotes = NO_NOTES,
+  playedNotes = NO_NOTES,
   startMidi = 21,
   endMidi = 108,
   onNavigate,
 }) => {
   const isMobile = useIsMobile();
+  const stripRef = useRef<HTMLDivElement>(null);
+  const base = useTransportValue(transport, (t) => baseFor(t.beat));
+  const sounding = useTransportValue(transport, (t) => soundingKey(timing, t.beat));
 
   // Vertical drag tracking for practice mode navigation.
   // Dragging down moves forward in time, up moves back — matches the natural
@@ -48,8 +69,7 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
     dragStartY.current = null;
   };
 
-  // Pre-compute key geometry once per midi-range. This used to run on every
-  // frame, plus a findIndex + slice + filter per visible note (~O(N*K) per RAF).
+  // Pre-compute key geometry once per midi-range.
   const { whiteKeyWidth, gridLines, midiLayout } = useMemo(() => {
     const layout = new Map<number, { left: number; width: number; isBlack: boolean }>();
     const lines: number[] = [];
@@ -80,28 +100,30 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
     return { whiteKeyWidth: ww, gridLines: lines, midiLayout: layout };
   }, [startMidi, endMidi]);
 
-  // Pre-compute static per-note properties once per track. Only the visible
-  // window and dynamic class need re-evaluating per frame.
-  const noteData = useMemo(
-    () =>
-      track.notes
-        .map((n) => {
-          const geo = midiLayout.get(n.midi);
-          if (!geo) return null;
-          return {
-            midi: n.midi,
-            start: n.startTime,
-            end: n.startTime + n.duration,
-            duration: n.duration,
-            left: geo.left,
-            width: geo.width,
-            isBlack: geo.isBlack,
-          };
-        })
-        .filter((x): x is NonNullable<typeof x> => x !== null),
-    [track, midiLayout],
-  );
+  // Notes that can be on screen while the playhead is in [base, base + REBASE_BEATS).
+  const visible = useMemo(() => {
+    const out: number[] = [];
+    const last = lowerBound(timing.starts, base + REBASE_BEATS + BEATS_VISIBLE);
+    for (let i = lowerBound(timing.starts, base - timing.maxDuration); i < last; i++) {
+      const n = timing.notes[i];
+      if (n.startTime + n.duration > base && midiLayout.has(n.midi)) out.push(i);
+    }
+    return out;
+  }, [timing, base, midiLayout]);
 
+  // Move the strip every frame, straight from the transport.
+  useLayoutEffect(() => {
+    const update = () => {
+      const strip = stripRef.current;
+      if (!strip) return;
+      const beat = transport.beat;
+      strip.style.transform = `translate3d(0, ${(beat - baseFor(beat)) * PCT_PER_BEAT}%, 0)`;
+    };
+    update();
+    return transport.subscribe(update);
+  }, [transport]);
+
+  const soundingSet = useMemo(() => new Set(parseKey(sounding)), [sounding]);
   const expectedSet = useMemo(() => new Set(expectedNotes), [expectedNotes]);
   const playedSet = useMemo(() => new Set(playedNotes), [playedNotes]);
 
@@ -148,36 +170,32 @@ const FallingNotesImpl: React.FC<FallingNotesProps> = ({
 
       <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-cyan-300/10 to-transparent" />
 
-      {noteData.map((n, index) => {
-        if (n.start > currentBeat + BEATS_VISIBLE) return null;
-        if (n.end < currentBeat) return null;
-
-        const beatsAheadStart = n.start - currentBeat;
-        const bottomPercent = (beatsAheadStart / BEATS_VISIBLE) * 100;
-        const heightPercent = (n.duration / BEATS_VISIBLE) * 100;
-
-        const isCurrent = n.start <= currentBeat && n.end > currentBeat;
-        const isCorrect = isCurrent && playedSet.has(n.midi);
-        const isTarget = isCurrent && expectedSet.has(n.midi);
-        const noteClassName = isCorrect
-          ? n.isBlack ? cls.correctBlack : cls.correctWhite
-          : isTarget
-            ? n.isBlack ? cls.targetBlack : cls.targetWhite
-            : n.isBlack ? cls.idleBlack : cls.idleWhite;
-
-        return (
-          <div
-            key={index}
-            className={`absolute rounded-t-md ${noteClassName}`}
-            style={{
-              left: `${n.left}%`,
-              width: `${n.width}%`,
-              bottom: `${bottomPercent}%`,
-              height: `${heightPercent}%`,
-            }}
-          />
-        );
-      })}
+      <div ref={stripRef} className="absolute inset-0 will-change-transform">
+        {visible.map((i) => {
+          const n = timing.notes[i];
+          const geo = midiLayout.get(n.midi)!;
+          const isCurrent = soundingSet.has(i);
+          const isCorrect = isCurrent && playedSet.has(n.midi);
+          const isTarget = isCurrent && expectedSet.has(n.midi);
+          const noteClassName = isCorrect
+            ? geo.isBlack ? cls.correctBlack : cls.correctWhite
+            : isTarget
+              ? geo.isBlack ? cls.targetBlack : cls.targetWhite
+              : geo.isBlack ? cls.idleBlack : cls.idleWhite;
+          return (
+            <div
+              key={i}
+              className={`absolute rounded-t-md ${noteClassName}`}
+              style={{
+                left: `${geo.left}%`,
+                width: `${geo.width}%`,
+                bottom: `${(n.startTime - base) * PCT_PER_BEAT}%`,
+                height: `${n.duration * PCT_PER_BEAT}%`,
+              }}
+            />
+          );
+        })}
+      </div>
 
       <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-gradient-to-t from-cyan-300 via-sky-400 to-transparent z-20 shadow-[0_0_22px_rgba(56,189,248,0.85)]" />
     </div>
