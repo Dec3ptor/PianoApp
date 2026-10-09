@@ -46,7 +46,7 @@ Browsers only allow the microphone on HTTPS or `localhost`. To test the mic on a
 
 ## Flow view
 
-Mint notes fall onto the keyboard and flare where they land, with sparks rising from each key: white when you play the right note, rose for a wrong one. *Settings → Particle effects* turns the sparks off; *Stage lighting* dims the keyboard so the keys you need stand out. On slower devices the sparks thin out automatically if the frame rate drops, and they're off when the system asks for reduced motion.
+The app opens in the Flow view (the header buttons switch to the sheet music or keyboard). Mint notes fall onto the keyboard and flare where they land, with sparks rising from each key: white when you play the right note, rose for a wrong one. *Settings → Particle effects* turns the sparks off; *Stage lighting* dims the keyboard so the keys you need stand out. On slower devices the sparks thin out automatically if the frame rate drops, and they're off when the system asks for reduced motion.
 
 ## MIDI keyboards
 

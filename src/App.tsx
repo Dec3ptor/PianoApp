@@ -35,9 +35,8 @@ type ViewMode = "both" | "sheet" | "keyboard" | "synthesia";
 
 export default function App() {
   const isMobile = useIsMobile();
-  // On mobile, default to a single view (Flow) instead of "both" which
-  // renders the sheet music + keyboard simultaneously and is much heavier.
-  const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "synthesia" : "both");
+  // Always open in Flow (falling notes); the sheet views load VexFlow on demand.
+  const [viewMode, setViewMode] = useState<ViewMode>("synthesia");
 
   const { midiNotes, isListening, startListening, stopListening, error } =
     usePitchDetector();
